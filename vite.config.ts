@@ -7,6 +7,10 @@ export default defineConfig(() => {
   return {
     base: './', // Using relative paths so it works perfectly on GitHub Pages subfolders or custom domains!
     plugins: [react(), tailwindcss()],
+    build: {
+      outDir: 'docs',
+      emptyOutDir: true,
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
