@@ -151,6 +151,10 @@ export const API = {
   implementos: {
     async listar(): Promise<Implemento[]> {
       try {
+        let rawData: any[] = [];
+        let relationError = false;
+
+        // Try to fetch with relation join first
         const { data, error } = await supabase
           .from("implementos")
           .select(`
@@ -163,12 +167,45 @@ export const API = {
             )
           `)
           .order("modelo");
-        if (error) throw error;
+
+        if (error) {
+          if (error.code === "PGRST200" || error.message?.includes("relationship") || error.message?.includes("foreign key")) {
+            relationError = true;
+          } else {
+            throw error;
+          }
+        } else {
+          rawData = data || [];
+        }
+
+        if (relationError) {
+          // Fetch implementos separately
+          const { data: impls, error: implsErr } = await supabase
+            .from("implementos")
+            .select("*")
+            .order("modelo");
+          if (implsErr) throw implsErr;
+
+          // Fetch all clients to map in-memory
+          const { data: clis, error: clisErr } = await supabase
+            .from("clientes")
+            .select("id, razao_social, cidade, uf");
+          
+          const clisMap = new Map<number, any>();
+          if (!clisErr && clis) {
+            clis.forEach(c => clisMap.set(c.id, c));
+          }
+
+          rawData = (impls || []).map((impl: any) => ({
+            ...impl,
+            clientes: impl.cliente_id ? clisMap.get(impl.cliente_id) : undefined
+          }));
+        }
 
         // Merge plano_id from local mapping if it exists in case DB is missing the column
         const plansMapping = localStorage.getItem("gst_implemento_planos");
         const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-        const mergedWithPlans = (data || []).map((impl: any) => ({
+        const mergedWithPlans = rawData.map((impl: any) => ({
           ...impl,
           plano_id: impl.plano_id || mapping[impl.id] || ""
         }));
@@ -185,7 +222,7 @@ export const API = {
         localStorage.setItem("gst_implementos", JSON.stringify(mergedWithPlans));
         return mergedWithPlans;
       } catch (err) {
-        console.warn("Falling back to simulated implementos...");
+        console.warn("Falling back to simulated implementos...", err);
         const saved = localStorage.getItem("gst_implementos");
         if (saved) return JSON.parse(saved);
         return [];
@@ -194,6 +231,9 @@ export const API = {
 
     async buscar(id: number): Promise<Implemento | null> {
       try {
+        let rawData: any = null;
+        let relationError = false;
+
         const { data, error } = await supabase
           .from("implementos")
           .select(`
@@ -207,13 +247,51 @@ export const API = {
           `)
           .eq("id", id)
           .single();
-        if (error) throw error;
+
+        if (error) {
+          if (error.code === "PGRST200" || error.message?.includes("relationship") || error.message?.includes("foreign key")) {
+            relationError = true;
+          } else {
+            throw error;
+          }
+        } else {
+          rawData = data;
+        }
+
+        if (relationError) {
+          const { data: impl, error: implErr } = await supabase
+            .from("implementos")
+            .select("*")
+            .eq("id", id)
+            .maybeSingle();
+          if (implErr) throw implErr;
+          if (!impl) return null;
+
+          let clientData = undefined;
+          if (impl.cliente_id) {
+            const { data: cli } = await supabase
+              .from("clientes")
+              .select("id, razao_social, cidade, uf")
+              .eq("id", impl.cliente_id)
+              .maybeSingle();
+            if (cli) {
+              clientData = cli;
+            }
+          }
+
+          rawData = {
+            ...impl,
+            clientes: clientData
+          };
+        }
+
+        if (!rawData) return null;
 
         const plansMapping = localStorage.getItem("gst_implemento_planos");
         const mapping = plansMapping ? JSON.parse(plansMapping) : {};
         return {
-          ...data,
-          plano_id: data.plano_id || mapping[id] || ""
+          ...rawData,
+          plano_id: rawData.plano_id || mapping[id] || ""
         };
       } catch (err) {
         const list = await this.listar();
@@ -223,17 +301,18 @@ export const API = {
 
     async inserir(implemento: Implemento): Promise<Implemento> {
       try {
-        // Try inserting with the full payload first
+        const { clientes, id, ...cleanPayload } = implemento;
+        // Try inserting with the clean payload first
         const { data, error } = await supabase
           .from("implementos")
-          .insert(implemento)
+          .insert(cleanPayload)
           .select()
           .single();
         
         if (error) {
           // If database is missing the plano_id column, retry without it and save to local mapping
           if (error.message?.includes("plano_id") || error.code === "42703") {
-            const { plano_id, ...dbPayload } = implemento;
+            const { plano_id, ...dbPayload } = cleanPayload;
             const retryResult = await supabase
               .from("implementos")
               .insert(dbPayload)
@@ -293,9 +372,10 @@ export const API = {
 
     async atualizar(id: number, implemento: Implemento): Promise<Implemento> {
       try {
+        const { clientes, id: _, ...cleanPayload } = implemento;
         const { data, error } = await supabase
           .from("implementos")
-          .update(implemento)
+          .update(cleanPayload)
           .eq("id", id)
           .select()
           .single();
@@ -303,7 +383,7 @@ export const API = {
         if (error) {
           // If database is missing the plano_id column, retry without it and save to local mapping
           if (error.message?.includes("plano_id") || error.code === "42703") {
-            const { plano_id, ...dbPayload } = implemento;
+            const { plano_id, ...dbPayload } = cleanPayload;
             const retryResult = await supabase
               .from("implementos")
               .update(dbPayload)
