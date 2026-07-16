@@ -1,0 +1,6 @@
+{
+  "name": "Gestão de Serviços",
+  "description": "Sistema completo de Gestão de Ordens de Serviço, Clientes, Equipamentos, Técnicos e Agendamentos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

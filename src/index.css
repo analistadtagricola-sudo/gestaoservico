@@ -1,0 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=DM+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-brand-red: #E30613;
+  --color-brand-red-dark: #a8040e;
+  --color-brand-ink: #1a1a1a;
+  --color-brand-bg: #f4f4f1;
+}
+
+/* Base custom styles to retain the professional aesthetic of GESTÃO DE SERVIÇOS */
+body {
+  background-color: var(--color-brand-bg);
+  font-family: var(--font-sans);
+  color: var(--color-brand-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Soft transition effects */
+.transition-smooth {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Scrollbar customizations */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Global button (.btn) styling to standardize interactive elements */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.75rem;
+  padding: 0 1.25rem;
+  border-radius: 0.5rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  height: 2.5rem; /* h-10 */
+  line-height: 1;
+  border: none;
+  outline: none;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media print {
+  /* Hide every element by default */
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  
+  body > * {
+    display: none !important;
+  }
+
+  /* Force display of the active printable preview modal wrapper */
+  div[class*="fixed"][class*="z-50"] {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  div[class*="fixed"][class*="z-50"] > div {
+    box-shadow: none !important;
+    border: none !important;
+    max-height: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide modal headers or close buttons in print */
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Ensure the printable container itself is the only visible thing */
+  #printable-os, #printable-os-campo {
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+}
+
