@@ -422,6 +422,8 @@ export function AppContent() {
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="truncate">
                 <h1 className="font-display font-extrabold text-xs uppercase tracking-wider text-white leading-none">
                   Gestão de Serviços
+                </h1>
+                <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest block mt-0.5">PÓS-VENDA ENTERPRISE</span>
               </motion.div>
             )}
           </div>
@@ -725,7 +727,7 @@ export function AppContent() {
                   {activeTab.view === "empresa" && <EmpresaView />}
                   {activeTab.view === "layout" && <LayoutView />}
                   {activeTab.view === "config_agenda" && <ConfigAgendaView />}
-                  {activeTab.view === "integracoes" && <IntegracoesView />}
+                  {activeTab.view === "integracoes" && <IntegracoesView onRefresh={fetchAllData} />}
                   {activeTab.view === "numeracao_os" && <NumeracaoOSView />}
                   {activeTab.view === "backup" && <BackupView />}
                   {activeTab.view === "logs" && <LogsView />}
