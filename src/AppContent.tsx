@@ -422,8 +422,6 @@ export function AppContent() {
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="truncate">
                 <h1 className="font-display font-extrabold text-xs uppercase tracking-wider text-white leading-none">
                   Gestão de Serviços
-                </h1>
-                <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest block mt-0.5">PÓS-VENDA ENTERPRISE</span>
               </motion.div>
             )}
           </div>
