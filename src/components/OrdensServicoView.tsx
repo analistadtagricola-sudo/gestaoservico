@@ -10,6 +10,7 @@ import {
   Search, 
   RefreshCw, 
   Edit, 
+  Pencil,
   Trash2, 
   X, 
   Save, 
@@ -31,9 +32,11 @@ import {
   Trash,
   Printer,
   Upload,
-  ArrowLeft
+  ArrowLeft,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
-import { OrdemServico, Cliente, Implemento, Tecnico, Apontamento } from "../types";
+import { OrdemServico, Cliente, Implemento, Tecnico, Apontamento, Veiculo, TipoAtendimento } from "../types";
 import { API } from "../lib/api";
 
 interface OrdensServicoViewProps {
@@ -54,6 +57,7 @@ interface PecaItem {
   descricao: string;
   quantidade: number;
   valor_unitario: number;
+  xml_imported?: boolean;
 }
 
 export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
@@ -77,6 +81,10 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
+
+  // Sorting State
+  const [sortField, setSortField] = useState<string>("numero_os");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   // Form Fields State
   const [clienteId, setClienteId] = useState("");
@@ -104,6 +112,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const [newApontHoraFim, setNewApontHoraFim] = useState("");
   const [newApontTecId, setNewApontTecId] = useState("");
   const [newApontDesc, setNewApontDesc] = useState("");
+  const [editingApontId, setEditingApontId] = useState<number | string | null>(null);
 
   // Peças State
   const [pecas, setPecas] = useState<PecaItem[]>([]);
@@ -120,9 +129,29 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const [valorDeslocamento, setValorDeslocamento] = useState<number>(0);
   const [valorHoraUnitario, setValorHoraUnitario] = useState<number>(150);
   const [valorMaoObra, setValorMaoObra] = useState<number>(0);
+  const [maoObraManual, setMaoObraManual] = useState(false);
+  const [deslocamentoManual, setDeslocamentoManual] = useState(false);
   const [veiculoUsado, setVeiculoUsado] = useState("");
+  const [veiculosList, setVeiculosList] = useState<Veiculo[]>([]);
+  const [tiposAtendimentoList, setTiposAtendimentoList] = useState<TipoAtendimento[]>([]);
+
+  useEffect(() => {
+    const loadVeiculosAndTipos = async () => {
+      try {
+        const vData = await API.veiculos.listar();
+        setVeiculosList(vData.filter(v => v.ativo !== false));
+        const tData = await API.tiposAtendimento.listar();
+        setTiposAtendimentoList(tData.filter(t => t.ativo !== false));
+      } catch (e) {
+        console.error("Erro ao carregar veículos ou tipos de atendimento:", e);
+      }
+    };
+    loadVeiculosAndTipos();
+  }, [isFormOpen]);
   const [outrosCustos, setOutrosCustos] = useState<number>(0);
   const [notaFiscal, setNotaFiscal] = useState("");
+  const [numNotaFiscal, setNumNotaFiscal] = useState("");
+  const [dataNotaFiscal, setDataNotaFiscal] = useState("");
   const [horimetroFinal, setHorimetroFinal] = useState<number | "">("");
   const [revisaoExecutada, setRevisaoExecutada] = useState("");
 
@@ -163,6 +192,15 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       window.removeEventListener("company_config_updated", loadCompany);
     };
   }, []);
+
+  // Fetch pointing records on demand for print preview O.S.
+  useEffect(() => {
+    if (printPreviewOS && printPreviewOS.id && !printPreviewOS.apontamentos) {
+      API.apontamentos.listar(printPreviewOS.id).then((apList) => {
+        setPrintPreviewOS((prev) => prev && prev.id === printPreviewOS.id ? { ...prev, apontamentos: apList } : prev);
+      }).catch(console.error);
+    }
+  }, [printPreviewOS]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
@@ -215,24 +253,26 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     };
 
     const hours = calcularHorasDeTempos(horaInicial, horaFinal);
-    if (hours > 0) {
-      setValorMaoObra(hours * valorHoraUnitario);
-    } else {
-      const uniqueBlocks = new Set<string>();
-      let apontHours = 0;
-      apontamentos.forEach(a => {
-        const key = `${a.data_servico}_${a.hora_inicial}_${a.hora_final}`;
-        if (!uniqueBlocks.has(key)) {
-          uniqueBlocks.add(key);
-          apontHours += Number(a.horas_trabalhadas || 0);
-        }
-      });
+    if (!maoObraManual) {
+      if (hours > 0) {
+        setValorMaoObra(hours * valorHoraUnitario);
+      } else {
+        const uniqueBlocks = new Set<string>();
+        let apontHours = 0;
+        apontamentos.forEach(a => {
+          const key = `${a.data_servico}_${a.hora_inicial}_${a.hora_final}`;
+          if (!uniqueBlocks.has(key)) {
+            uniqueBlocks.add(key);
+            apontHours += Number(a.horas_trabalhadas || 0);
+          }
+        });
 
-      if (apontHours > 0) {
-        setValorMaoObra(apontHours * valorHoraUnitario);
+        if (apontHours > 0) {
+          setValorMaoObra(apontHours * valorHoraUnitario);
+        }
       }
     }
-  }, [horaInicial, horaFinal, apontamentos, valorHoraUnitario]);
+  }, [horaInicial, horaFinal, apontamentos, valorHoraUnitario, maoObraManual]);
 
   // Open form directly when preselected ID changes
   useEffect(() => {
@@ -254,8 +294,10 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const loadOSDetails = async (os: OrdemServico) => {
     if (!os.id) return;
     setIsLoading(true);
+    setApontamentos([]); // Clear current list first to avoid ghosting
     try {
       const apList = await API.apontamentos.listar(os.id);
+      console.log("Loaded appointments for OS", os.id, ":", apList);
       setApontamentos(apList);
 
       // Restore custom lists for parts from LocalStorage
@@ -311,11 +353,15 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setKmFinal(os.km_final || 0);
       setValorKmUnitario(os.valor_km_unitario || 2.5);
       setValorDeslocamento(os.valor_deslocamento || 0);
+      setDeslocamentoManual(os.valor_deslocamento !== undefined && os.valor_deslocamento !== null && os.valor_deslocamento !== 0);
       setValorHoraUnitario(os.valor_hora_unitario || 150);
       setValorMaoObra(os.valor_mao_obra || 0);
+      setMaoObraManual(os.valor_mao_obra !== undefined && os.valor_mao_obra !== null && os.valor_mao_obra !== 0);
       setVeiculoUsado(os.veiculo_usado || "");
       setOutrosCustos(os.valor_terceiros || 0);
       setNotaFiscal(os.nota_fiscal || "");
+      setNumNotaFiscal(os.num_nota_fiscal || "");
+      setDataNotaFiscal(os.data_nota_fiscal ? os.data_nota_fiscal.substring(0, 10) : "");
       setHorimetroFinal(os.horimetro_final || "");
       setRevisaoExecutada(os.revisao_executada || "");
 
@@ -346,13 +392,16 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setKmFinal(0);
       setValorKmUnitario(2.5);
       setValorDeslocamento(0);
+      setDeslocamentoManual(false);
       setValorHoraUnitario(150);
       setValorMaoObra(0);
+      setMaoObraManual(false);
       setVeiculoUsado("");
       setOutrosCustos(0);
       setNotaFiscal("");
+      setNumNotaFiscal("");
+      setDataNotaFiscal("");
       setHorimetroFinal("");
-      setRevisaoExecutada("");
 
       setApontamentos([]);
       setPecas([]);
@@ -390,7 +439,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
   // Mileage rate calculation based on selected technician
   const calcularCustoDeslocamento = () => {
-    if (valorDeslocamento > 0) return valorDeslocamento;
+    if (deslocamentoManual) return valorDeslocamento;
     if (!tecnicoId) return 0;
     const tech = tecnicos.find(t => t.id === Number(tecnicoId));
     const rate = valorKmUnitario > 0 ? valorKmUnitario : (tech?.valor_km || 0);
@@ -398,7 +447,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   };
 
   const calcularCustoMaoObra = () => {
-    if (valorMaoObra > 0) return valorMaoObra;
+    if (maoObraManual) return valorMaoObra;
     if (!tecnicoId) return 0;
     const tech = tecnicos.find(t => t.id === Number(tecnicoId));
     const rate = valorHoraUnitario > 0 ? valorHoraUnitario : (tech?.valor_hora || 0);
@@ -407,11 +456,12 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
   // Total O.S. budget sum
   const calcularValorTotalOS = () => {
-    const totalPecas = calcularTotalPecas();
-    const deslocamento = valorDeslocamento > 0 ? valorDeslocamento : calcularCustoDeslocamento();
-    const custoMaoObra = valorMaoObra > 0 ? valorMaoObra : calcularCustoMaoObra();
+    const deslocamento = calcularCustoDeslocamento();
+    const custoMaoObra = calcularCustoMaoObra();
     
-    return totalPecas + deslocamento + custoMaoObra + Number(outrosCustos);
+    // O faturamento total agora considera apenas M.O, KM e Outras Despesas.
+    // O valor das peças aparece no resumo visual mas não soma no faturamento final da O.S.
+    return deslocamento + custoMaoObra + Number(outrosCustos);
   };
 
   const handleSaveOS = async (e?: React.FormEvent) => {
@@ -423,8 +473,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
     setIsLoading(true);
 
-    const deslocamento = valorDeslocamento > 0 ? valorDeslocamento : calcularCustoDeslocamento();
-    const custoMaoObra = valorMaoObra > 0 ? valorMaoObra : calcularCustoMaoObra();
+    const deslocamento = calcularCustoDeslocamento();
+    const custoMaoObra = calcularCustoMaoObra();
     const valTotal = calcularValorTotalOS();
 
     const payload: OrdemServico = {
@@ -458,12 +508,15 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       valor_mao_obra: custoMaoObra,
       valor_terceiros: Number(outrosCustos),
       nota_fiscal: notaFiscal,
+      num_nota_fiscal: numNotaFiscal,
+      data_nota_fiscal: dataNotaFiscal || null,
       valor_total: valTotal,
       horimetro_final: horimetroFinal ? Number(horimetroFinal) : undefined,
       revisao_executada: revisaoExecutada
     };
 
     try {
+      console.log("Saving OS with payload:", payload);
       let savedOS: OrdemServico;
       if (currentOS && currentOS.id) {
         savedOS = await API.ordensServico.atualizar(currentOS.id, payload);
@@ -473,6 +526,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         showToast("Ordem de Serviço criada com sucesso!", "success");
       }
       
+      console.log("Saved OS result:", savedOS);
       // Save parts to specific sub key
       if (savedOS.id) {
         localStorage.setItem(`gst_os_pecas_${savedOS.id}`, JSON.stringify(pecas));
@@ -482,10 +536,22 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       // Reload details to get the synchronized apontamentos
       await loadOSDetails(savedOS);
       setCurrentOS(savedOS);
+
+      // Sync form states with saved data to ensure UI matches DB exactly
+      if (savedOS.reclamacao !== undefined) setReclamacao(savedOS.reclamacao);
+      if (savedOS.servico_executado !== undefined) setServicoExecutado(savedOS.servico_executado);
+      if (savedOS.observacao !== undefined) setObservacao(savedOS.observacao || "");
+      if (savedOS.numero_os) {
+        // Force update of number if it was generated
+        setCurrentOS(prev => prev ? { ...prev, numero_os: savedOS.numero_os } : savedOS);
+      }
+      if (savedOS.km_rodado_total !== undefined) setKmRodado(savedOS.km_rodado_total);
+      if (savedOS.horimetro_final !== undefined) setHorimetroFinal(savedOS.horimetro_final);
+
       return savedOS;
-    } catch (err) {
-      console.error(err);
-      showToast("Erro ao salvar O.S.", "error");
+    } catch (err: any) {
+      console.error("Error in handleSaveOS:", err);
+      showToast(`Erro ao salvar O.S.: ${err?.message || "Erro desconhecido"}`, "error");
       return null;
     } finally {
       setIsLoading(false);
@@ -493,9 +559,13 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   };
 
   const handleFinalizeOS = async () => {
-    if (!currentOS || !currentOS.id) {
-      showToast("Grave a O.S. primeiro para liberar o encerramento.", "error");
-      return;
+    let activeOS = currentOS;
+    if (!activeOS || !activeOS.id) {
+      activeOS = await handleSaveOS();
+      if (!activeOS || !activeOS.id) {
+        showToast("Grave a O.S. primeiro para liberar o encerramento.", "error");
+        return;
+      }
     }
 
     if (!horimetroFinal) {
@@ -519,8 +589,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     try {
       // First save general fields
       const saved = await handleSaveOS();
-      if (saved) {
-        await API.ordensServico.finalizar(currentOS.id);
+      if (saved && saved.id) {
+        await API.ordensServico.finalizar(saved.id);
         
         // Also update equipment horímetro dynamically!
         if (equipment && equipment.id) {
@@ -531,7 +601,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         }
 
         setStatus("FINALIZADA");
-        showToast(`O.S. ${currentOS.numero_os} FINALIZADA COM SUCESSO!`, "success");
+        showToast(`O.S. ${saved.numero_os} FINALIZADA COM SUCESSO!`, "success");
         closeForm();
         await onRefresh();
       }
@@ -562,16 +632,17 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     }
   };
 
-  // Add a specific labor record (Apontamento)
+  // Add or Update a specific labor record (Apontamento)
   const handleAddApontamento = async () => {
-    if (!currentOS || !currentOS.id) {
-      showToast("Grave os dados gerais da O.S. antes de registrar apontamentos.", "error");
-      return;
+    let activeOS = currentOS;
+    if (!activeOS || !activeOS.id) {
+      activeOS = await handleSaveOS();
+      if (!activeOS || !activeOS.id) {
+        showToast("Por favor, preencha os dados obrigatórios da aba 'Dados da O.S.' primeiro.", "error");
+        return;
+      }
     }
-    if (!tecnicoId) {
-      showToast("Por favor, selecione o Técnico Principal Responsável na aba Agendamento primeiro.", "error");
-      return;
-    }
+    
     if (!newApontData || !newApontHoraIn || !newApontHoraFim) {
       showToast("Preencha todos os campos obrigatórios (Data, Hora Início, Hora Fim).", "error");
       return;
@@ -586,58 +657,138 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
     setIsLoading(true);
     try {
-      // Insert new pointing for Principal
-      const newApPrincipal: Apontamento = {
-        os_id: currentOS.id,
-        tecnico_id: Number(tecnicoId),
-        data_servico: newApontData,
-        hora_inicial: newApontHoraIn,
-        hora_final: newApontHoraFim,
-        horas_trabalhadas: hoursDecimal,
-        descricao_servico: newApontDesc || "Atendimento em Campo"
-      };
-      await API.apontamentos.inserir(newApPrincipal);
+      if (editingApontId) {
+        // UPDATE MODE
+        const existing = apontamentos.find(a => a.id === editingApontId);
+        if (!existing) throw new Error("Apontamento não encontrado.");
 
-      // Insert new pointing for Auxiliar if selected
-      if (auxiliarId) {
-        const newApAuxiliar: Apontamento = {
-          os_id: currentOS.id,
-          tecnico_id: Number(auxiliarId),
+        const updatedAp: Apontamento = {
+          ...existing,
+          data_servico: newApontData,
+          hora_inicial: newApontHoraIn,
+          hora_final: newApontHoraFim,
+          horas_trabalhadas: hoursDecimal,
+          descricao_servico: newApontDesc || existing.descricao_servico
+        };
+
+        const result = await API.apontamentos.atualizar(Number(editingApontId), updatedAp);
+        
+        setApontamentos(prev => prev.map(a => a.id === editingApontId ? result : a));
+        showToast("Apontamento atualizado com sucesso!");
+        setEditingApontId(null);
+      } else {
+        // INSERT MODE
+        if (!tecnicoId) {
+          showToast("Por favor, selecione o Técnico Principal Responsável na aba Agendamento primeiro.", "error");
+          setIsLoading(false);
+          return;
+        }
+
+        const newAp: Apontamento = {
+          os_id: activeOS.id!,
+          tecnico_id: Number(tecnicoId),
           data_servico: newApontData,
           hora_inicial: newApontHoraIn,
           hora_final: newApontHoraFim,
           horas_trabalhadas: hoursDecimal,
           descricao_servico: newApontDesc || "Atendimento em Campo"
         };
-        await API.apontamentos.inserir(newApAuxiliar);
-      }
+        
+        const insertedMain = await API.apontamentos.inserir(newAp);
+        const insertedItems: Apontamento[] = [insertedMain];
 
-      showToast("Apontamento registrado com sucesso!");
+        // If there is an assistant, insert a pointing record for them too
+        if (auxiliarId && auxiliarId !== "" && auxiliarId !== "0" && auxiliarId !== "null" && auxiliarId !== tecnicoId) {
+          const auxAp: Apontamento = {
+            os_id: activeOS.id!,
+            tecnico_id: Number(auxiliarId),
+            data_servico: newApontData,
+            hora_inicial: newApontHoraIn,
+            hora_final: newApontHoraFim,
+            horas_trabalhadas: hoursDecimal,
+            descricao_servico: newApontDesc || "Auxílio em Atendimento de Campo"
+          };
+          const insertedAux = await API.apontamentos.inserir(auxAp);
+          insertedItems.push(insertedAux);
+        }
+        
+        setApontamentos(prev => {
+          const ids = insertedItems.map(i => i.id);
+          const filtered = prev.filter(p => !ids.includes(p.id));
+          return [...insertedItems, ...filtered];
+        });
+
+        showToast("Apontamento registrado com sucesso!");
+      }
       
       // Reset inputs
+      setNewApontData("");
       setNewApontHoraIn("");
       setNewApontHoraFim("");
       setNewApontDesc("");
       
-      // Reload details
-      await loadOSDetails(currentOS);
+      // Reload details from server to ensure consistency
+      await loadOSDetails(activeOS);
     } catch (err) {
       console.error(err);
-      showToast("Erro ao salvar apontamento.", "error");
+      showToast("Erro ao processar apontamento.", "error");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDeleteApontamento = async (apId: number) => {
-    if (!confirm("Excluir este apontamento de horas?")) return;
+  const handleStartEditApontamento = (a: Apontamento) => {
+    setEditingApontId(a.id || null);
+    setNewApontData(a.data_servico || "");
+    setNewApontHoraIn(a.hora_inicial || "");
+    setNewApontHoraFim(a.hora_final || "");
+    setNewApontDesc(a.descricao_servico || "");
+    
+    // Scroll to the "NOVO REGISTRO DE HORAS" section
+    const section = document.getElementById("novo-apontamento-section");
+    if (section) {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handleCancelEditApontamento = () => {
+    setEditingApontId(null);
+    setNewApontData("");
+    setNewApontHoraIn("");
+    setNewApontHoraFim("");
+    setNewApontDesc("");
+  };
+
+  const handleDeleteApontamento = async (apId: number | string) => {
     setIsLoading(true);
     try {
-      await API.apontamentos.excluir(apId);
-      showToast("Apontamento removido.");
+      console.log("Handle Delete: Forcing removal of ID:", apId);
+      
+      // 1. Immediate UI removal (Optimistic Update)
+      setApontamentos(prev => prev.filter(a => String(a.id) !== String(apId)));
+      
+      // 2. API call
+      const success = await API.apontamentos.excluir(apId);
+      
+      if (success) {
+        showToast("Apontamento removido.");
+        // We wait a bit before refreshing from server to allow DB consistency
+        setTimeout(async () => {
+          if (currentOS?.id) {
+            const freshList = await API.apontamentos.listar(currentOS.id);
+            setApontamentos(freshList);
+          }
+        }, 1500);
+      } else {
+        showToast("Removido da tela, mas houve um erro na sincronização.", "info");
+      }
+    } catch (err: any) {
+      console.error("Error deleting pointing:", err);
+      showToast("Erro ao excluir: " + (err.message || "Erro desconhecido"), "error");
+      
+      // Rollback UI if it failed catastrophically? 
+      // Better to refresh from server
       if (currentOS) await loadOSDetails(currentOS);
-    } catch (err) {
-      console.error(err);
     } finally {
       setIsLoading(false);
     }
@@ -666,7 +817,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       codigo: newPecaCod || "—",
       descricao: newPecaDesc.toUpperCase(),
       quantidade: Number(newPecaQtde),
-      valor_unitario: Number(newPecaValor)
+      valor_unitario: Number(newPecaValor),
+      xml_imported: false
     };
     const updated = [...pecas, newItem];
     setPecas(updated);
@@ -917,20 +1069,17 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       const newId = "P" + String(Date.now()) + "_" + Math.random().toString(36).substr(2, 4);
       newPecasList.push({
         id: newId,
-        codigo: item.codigo || "NF-e",
+        codigo: item.codigo,
         descricao: item.descricao,
         quantidade: item.quantidade,
-        valor_unitario: item.valor_unitario
+        valor_unitario: item.valor_unitario,
+        xml_imported: true
       });
     });
 
     setPecas(newPecasList);
     if (currentOS?.id) {
       localStorage.setItem(`gst_os_pecas_${currentOS.id}`, JSON.stringify(newPecasList));
-    }
-
-    if (parsedNfeNumber) {
-      setNotaFiscal(parsedNfeNumber);
     }
 
     setIsXmlImportOpen(false);
@@ -978,10 +1127,68 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     );
   });
 
-  const totalPages = Math.ceil(filteredOrdens.length / itemsPerPage) || 1;
+  const getDaysOpen = (os: OrdemServico) => {
+    if (os.status === "FINALIZADA" || os.status === "CANCELADA") return -1;
+    const dateBase = os.data_abertura || os.created_at;
+    if (!dateBase) return -1;
+    const start = new Date(dateBase);
+    const today = new Date();
+    start.setHours(0,0,0,0);
+    today.setHours(0,0,0,0);
+    const diff = today.getTime() - start.getTime();
+    return Math.floor(diff / (1000 * 60 * 60 * 24));
+  };
+
+  const sortedOrdens = [...filteredOrdens].sort((a, b) => {
+    let valA: any = a[sortField as keyof OrdemServico];
+    let valB: any = b[sortField as keyof OrdemServico];
+
+    if (sortField === "cliente") {
+      valA = a.clientes?.razao_social || "";
+      valB = b.clientes?.razao_social || "";
+    } else if (sortField === "equipamento") {
+      valA = a.implementos?.modelo || "";
+      valB = b.implementos?.modelo || "";
+    } else if (sortField === "cidade") {
+      valA = a.clientes?.cidade || "";
+      valB = b.clientes?.cidade || "";
+    } else if (sortField === "tecnico") {
+      const techA = tecnicos.find(t => t.id === a.tecnico_id);
+      const techB = tecnicos.find(t => t.id === b.tecnico_id);
+      valA = techA?.apelido || techA?.nome || "";
+      valB = techB?.apelido || techB?.nome || "";
+    } else if (sortField === "dias_abertos") {
+      valA = getDaysOpen(a);
+      valB = getDaysOpen(b);
+    }
+
+    if (valA === undefined || valA === null) valA = "";
+    if (valB === undefined || valB === null) valB = "";
+
+    if (typeof valA === "string" && typeof valB === "string") {
+      return sortDirection === "asc"
+        ? valA.localeCompare(valB, "pt-BR", { numeric: true })
+        : valB.localeCompare(valA, "pt-BR", { numeric: true });
+    }
+
+    if (valA < valB) return sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const toggleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const totalPages = Math.ceil(sortedOrdens.length / itemsPerPage) || 1;
   const pageIndex = Math.min(currentPage, totalPages);
   const startIdx = (pageIndex - 1) * itemsPerPage;
-  const paginatedOrdens = filteredOrdens.slice(startIdx, startIdx + itemsPerPage);
+  const paginatedOrdens = sortedOrdens.slice(startIdx, startIdx + itemsPerPage);
 
   const selectedClientInfo = getSelectedClientInfo();
 
@@ -1097,14 +1304,63 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                    <th className="p-4 text-center">Nº O.S.</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4">Cliente</th>
-                    <th className="p-4">Equipamento / Série</th>
-                    <th className="p-4">Cidade</th>
-                    <th className="p-4 text-center">Técnico Principal</th>
-                    <th className="p-4 text-center">Dias Abertos</th>
+                  <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                    <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("numero_os")}>
+                      <div className="flex items-center justify-center gap-1">
+                        Nº O.S.
+                        {sortField === "numero_os" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("status")}>
+                      <div className="flex items-center gap-1">
+                        Status
+                        {sortField === "status" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("cliente")}>
+                      <div className="flex items-center gap-1">
+                        Cliente
+                        {sortField === "cliente" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("equipamento")}>
+                      <div className="flex items-center gap-1">
+                        Equipamento / Série
+                        {sortField === "equipamento" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("cidade")}>
+                      <div className="flex items-center gap-1">
+                        Cidade
+                        {sortField === "cidade" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("tecnico")}>
+                      <div className="flex items-center justify-center gap-1">
+                        Técnico Principal
+                        {sortField === "tecnico" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("dias_abertos")}>
+                      <div className="flex items-center justify-center gap-1">
+                        Dias Abertos
+                        {sortField === "dias_abertos" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
                     <th className="p-4 text-right w-24">Ações</th>
                   </tr>
                 </thead>
@@ -1239,7 +1495,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
             <div className="text-right">
               <span className="text-[10px] font-bold text-gray-400 block uppercase tracking-wide">Código</span>
               <strong className="font-display text-2xl font-extrabold text-gray-800">
-                {currentOS?.numero_os || "NOVA"}
+                {(currentOS?.numero_os === "EMPTY" || !currentOS?.numero_os) ? "NOVA" : currentOS.numero_os}
               </strong>
             </div>
           </div>
@@ -1258,15 +1514,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => {
-                  if (!currentOS && tab.id !== "dados") {
-                    showToast("Por favor, salve os dados iniciais antes de abrir as outras abas.", "info");
-                    return;
-                  }
                   setActiveTab(tab.id as OSTabType);
                 }}
                 className={`flex-1 text-center py-3 text-[11px] font-extrabold uppercase tracking-wide border-b-2 transition-all ${
-                  !currentOS && tab.id !== "dados" ? "text-gray-300 cursor-not-allowed bg-gray-50/50" : ""
-                } ${
                   activeTab === tab.id 
                     ? "border-brand-red text-brand-ink bg-gray-50" 
                     : "border-transparent text-gray-400 hover:text-gray-700"
@@ -1367,13 +1617,21 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                         disabled={status === "FINALIZADA" || status === "CANCELADA"}
                         className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red"
                       >
-                        <option>GARANTIA</option>
-                        <option>ASSISTÊNCIA TÉCNICA</option>
-                        <option>REVISÃO PREVENTIVA</option>
-                        <option>ENTREGA TÉCNICA</option>
-                        <option>MONTAGEM</option>
-                        <option>TREINAMENTO</option>
-                        <option>OUTRO</option>
+                        {tiposAtendimentoList.length > 0 ? (
+                          tiposAtendimentoList.map((t) => (
+                            <option key={t.id} value={t.nome}>{t.nome}</option>
+                          ))
+                        ) : (
+                          <>
+                            <option>GARANTIA</option>
+                            <option>ASSISTÊNCIA TÉCNICA</option>
+                            <option>REVISÃO PREVENTIVA</option>
+                            <option>ENTREGA TÉCNICA</option>
+                            <option>MONTAGEM</option>
+                            <option>TREINAMENTO</option>
+                            <option>OUTRO</option>
+                          </>
+                        )}
                       </select>
                     </div>
                     <div>
@@ -1636,8 +1894,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
                 {/* 3. NEW APPOINTMENT GRID */}
                 <div className="space-y-4">
-                  <h3 className="text-xs font-bold uppercase text-brand-red tracking-wider border-b border-gray-100 pb-1 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" /> Novo Registro de Horas (Apontamento)
+                  <h3 className="text-xs font-bold uppercase text-brand-red tracking-wider border-b border-gray-100 pb-1 flex items-center gap-1" id="novo-apontamento-section">
+                    <Clock className="w-3.5 h-3.5" /> {editingApontId ? "Editar Registro de Horas" : "Novo Registro de Horas (Apontamento)"}
                   </h3>
 
                   {status !== "FINALIZADA" && status !== "CANCELADA" ? (
@@ -1697,13 +1955,24 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                               className="w-full border border-gray-200 rounded px-2.5 py-1 text-xs bg-white"
                             />
                           </div>
-                          <button
-                            type="button"
-                            onClick={handleAddApontamento}
-                            className="btn bg-brand-red hover:bg-brand-red-dark text-white text-[11px] font-bold py-1.5 shadow border-none w-full"
-                          >
-                            Lançar Horas
-                          </button>
+                          <div className="flex gap-2 w-full">
+                            <button
+                              type="button"
+                              onClick={handleAddApontamento}
+                              className={`btn ${editingApontId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-brand-red hover:bg-brand-red-dark'} text-white text-[11px] font-bold py-1.5 shadow border-none flex-1`}
+                            >
+                              {editingApontId ? "Atualizar Horas" : "Lançar Horas"}
+                            </button>
+                            {editingApontId && (
+                              <button
+                                type="button"
+                                onClick={handleCancelEditApontamento}
+                                className="btn bg-gray-200 hover:bg-gray-300 text-gray-700 text-[11px] font-bold py-1.5 shadow border-none px-4"
+                              >
+                                Cancelar
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <span className="text-[9px] text-gray-400 block mt-1">Este lançamento registrará as horas simultaneamente para o técnico principal e auxiliar (se houver).</span>
@@ -1720,8 +1989,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-gray-200 text-[10px] font-bold text-gray-400 uppercase tracking-wider bg-gray-50/50">
-                        <th className="p-2">Data</th>
                         <th className="p-2">Técnico</th>
+                        <th className="p-2">Data</th>
                         <th className="p-2">Hora Inicial</th>
                         <th className="p-2">Hora Final</th>
                         <th className="p-2 text-center">Horas Líquidas</th>
@@ -1737,21 +2006,41 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                       ) : (
                         apontamentos.map(a => (
                           <tr key={a.id}>
+                            <td className="p-2 font-bold text-brand-red uppercase text-[10px]">
+                              {a.tecnicos?.apelido || a.tecnicos?.nome || "—"}
+                            </td>
                             <td className="p-2">{a.data_servico ? new Date(a.data_servico).toLocaleDateString("pt-BR") : "—"}</td>
-                            <td className="p-2 font-bold text-gray-700">{a.tecnicos?.apelido || a.tecnicos?.nome || "Indefinido"}</td>
                             <td className="p-2 font-mono">{a.hora_inicial}</td>
                             <td className="p-2 font-mono">{a.hora_final}</td>
                             <td className="p-2 text-center font-bold text-brand-red font-mono">{a.horas_trabalhadas} h</td>
                             <td className="p-2 max-w-[200px] truncate text-gray-500">{a.descricao_servico}</td>
                             <td className="p-2 text-right">
-                              <button
-                                type="button"
-                                disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                                onClick={() => a.id && handleDeleteApontamento(a.id)}
-                                className="p-1 hover:bg-rose-50 text-rose-600 rounded disabled:opacity-30"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex justify-end gap-1">
+                                <button
+                                  type="button"
+                                  disabled={status === "FINALIZADA" || status === "CANCELADA" || isLoading}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStartEditApontamento(a);
+                                  }}
+                                  className="p-2 hover:bg-blue-100 text-blue-600 rounded-full transition-colors disabled:opacity-30"
+                                  title="Editar apontamento"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={status === "FINALIZADA" || status === "CANCELADA" || isLoading}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (a.id) handleDeleteApontamento(a.id);
+                                  }}
+                                  className="p-2 hover:bg-rose-100 text-rose-600 rounded-full transition-colors disabled:opacity-30"
+                                  title="Excluir apontamento"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -1760,9 +2049,17 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   </table>
 
                   {/* Summary Footer */}
-                  <div className="bg-gray-50 p-3 rounded border border-gray-150 flex justify-between items-center text-xs">
-                    <span className="font-bold text-gray-500 uppercase tracking-wide">Total de Horas do Atendimento:</span>
-                    <strong className="font-mono text-base text-brand-red font-extrabold">{calcularTotalHorasTrabalhadas().toFixed(2)} horas</strong>
+                  <div className="bg-gray-50 p-3 rounded border border-gray-150 flex flex-wrap justify-between items-center text-xs gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-gray-500 uppercase tracking-wide">Total de Horas:</span>
+                      <strong className="font-mono text-base text-brand-red font-extrabold">{calcularTotalHorasTrabalhadas().toFixed(2)} horas</strong>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-gray-500 uppercase tracking-wide">Total Mão de Obra Realizado:</span>
+                      <strong className="font-mono text-base text-brand-red font-extrabold">
+                        {(calcularTotalHorasTrabalhadas() * Number(valorHoraUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </strong>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2028,7 +2325,12 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                       ) : (
                         pecas.map(p => (
                           <tr key={p.id}>
-                            <td className="p-2 font-mono text-gray-500 font-bold">{p.codigo}</td>
+                                <td className="p-2">
+                                  <div className="font-mono text-gray-700 font-bold">{p.codigo}</div>
+                                  {notaFiscal && (
+                                    <div className="text-[9px] text-gray-400 font-medium">NF: {notaFiscal}</div>
+                                  )}
+                                </td>
                             <td className="p-2 font-bold text-gray-700">{p.descricao}</td>
                             <td className="p-2 text-center font-mono">{p.quantidade}</td>
                             <td className="p-2 text-right font-mono">{p.valor_unitario.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
@@ -2050,9 +2352,17 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   </table>
 
                   {/* Summary Footer */}
-                  <div className="bg-gray-50 p-3 rounded border border-gray-150 flex justify-between items-center text-xs">
-                    <span className="font-bold text-gray-500 uppercase tracking-wide">Subtotal de Peças / Insumos:</span>
-                    <strong className="font-mono text-base text-brand-red font-extrabold">{calcularTotalPecas().toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+                  <div className="bg-gray-50 p-3 rounded border border-gray-150 space-y-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="font-bold text-gray-500 uppercase tracking-wide">Subtotal de Peças / Insumos:</span>
+                      <strong className="font-mono text-base text-brand-red font-extrabold">{calcularTotalPecas().toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+                    </div>
+                    {notaFiscal && (
+                      <div className="flex justify-between items-center text-[10px] border-t border-gray-200 pt-2">
+                        <span className="font-bold text-gray-400 uppercase tracking-wide">Nº da Nota Fiscal (NF-e):</span>
+                        <span className="font-mono font-bold text-gray-600">{notaFiscal}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2115,12 +2425,36 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                         className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white"
                       >
                         <option value="">Selecione o veículo...</option>
-                        <option value="HILUX">TOYOTA HILUX (FROTA 01)</option>
-                        <option value="L200">MITSUBISHI L200 (FROTA 02)</option>
-                        <option value="FIORINO">FIAT FIORINO (FROTA 03)</option>
-                        <option value="SAVEIRO">VW SAVEIRO (FROTA 04)</option>
-                        <option value="PROPRIO">VEÍCULO PRÓPRIO DO TÉCNICO</option>
+                        {veiculosList.length > 0 ? (
+                          veiculosList.map((v) => (
+                            <option key={v.id} value={v.placa}>
+                              {v.modelo} ({v.placa})
+                            </option>
+                          ))
+                        ) : (
+                          <>
+                            <option value="HILUX">TOYOTA HILUX (FROTA 01)</option>
+                            <option value="L200">MITSUBISHI L200 (FROTA 02)</option>
+                            <option value="FIORINO">FIAT FIORINO (FROTA 03)</option>
+                            <option value="SAVEIRO">VW SAVEIRO (FROTA 04)</option>
+                            <option value="PROPRIO">VEÍCULO PRÓPRIO DO TÉCNICO</option>
+                          </>
+                        )}
                       </select>
+                    </div>
+                  </div>
+
+                  {/* Summary Footer for KM */}
+                  <div className="bg-gray-50 p-3 rounded border border-gray-150 flex flex-wrap justify-between items-center text-xs gap-4 mt-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-gray-500 uppercase tracking-wide">Total KM Realizado:</span>
+                      <strong className="font-mono text-base text-brand-red font-extrabold">{kmRodado} KM</strong>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-gray-500 uppercase tracking-wide">Custo Deslocamento Realizado:</span>
+                      <strong className="font-mono text-base text-brand-red font-extrabold">
+                        {(Number(kmRodado) * Number(valorKmUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </strong>
                     </div>
                   </div>
                 </div>
@@ -2135,115 +2469,137 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   </h3>
 
                   <div className="bg-amber-50 text-amber-800 p-3 rounded border border-amber-200">
-                    <strong>Atenção:</strong> Nem sempre o valor final cobrado é o que foi executado/calculado. Use os campos abaixo para definir ou ajustar livremente os valores reais que serão faturados.
+                    <strong>Atenção:</strong> Nem sempre o valor final cobrado é o que foi executado/calculado. Use os campos abaixo para definir os valores que serão efetivamente faturados.
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-150">
-                    {/* MAO DE OBRA */}
-                    <div className="space-y-3">
-                      <h4 className="font-bold text-gray-700 uppercase text-[10px] tracking-wide border-b border-gray-200 pb-1">Mão de Obra e Hora Técnica</h4>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Valor Hora Técnica (R$)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={valorHoraUnitario || ""}
-                            onChange={(e) => setValorHoraUnitario(Number(e.target.value))}
-                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Ex: 150.00"
-                            className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-white font-mono"
-                          />
+                  {/* SEÇÃO 1: RESUMO DO QUE FOI REALIZADO (CALCULADO) */}
+                  <div className="bg-[#f0f7ff] p-4 rounded-xl border border-blue-100 mb-6">
+                    <h4 className="font-bold text-blue-800 uppercase text-[11px] tracking-widest pb-2 mb-4 flex items-center gap-2 border-b border-blue-200/50">
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                      VALORES REALIZADOS (BASEADO NOS APONTAMENTOS)
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white p-4 rounded-lg border border-blue-50 shadow-sm transition-all hover:shadow-md">
+                        <span className="text-blue-500 font-bold block uppercase text-[10px] mb-2 tracking-tight">MÃO DE OBRA REALIZADA:</span>
+                        <div className="flex justify-between items-end">
+                          <strong className="text-2xl font-mono text-blue-900 leading-none">{calcularTotalHorasTrabalhadas().toFixed(2)} hrs</strong>
+                          <span className="text-[11px] text-blue-400 font-bold mb-0.5">x R$ {Number(valorHoraUnitario).toFixed(2)}/h</span>
                         </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Valor Pago Mão de Obra (R$)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={valorMaoObra || ""}
-                            onChange={(e) => setValorMaoObra(Number(e.target.value))}
-                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Ex: 450.00"
-                            className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-white font-mono font-bold text-emerald-600"
-                          />
+                        <div className="text-xs font-extrabold text-blue-700 mt-3 pt-2 border-t border-blue-50 flex justify-between">
+                          <span>Total Realizado:</span>
+                          <span>{(calcularTotalHorasTrabalhadas() * Number(valorHoraUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
                         </div>
                       </div>
-                      {(() => {
-                        const totalHours = apontamentos.reduce((sum, a) => sum + Number(a.horas_trabalhadas || 0), 0);
-                        return totalHours > 0 ? (
-                          <span className="text-[9px] text-gray-400 block">
-                            Calculado automaticamente com base nos apontamentos: {totalHours.toFixed(2)} hrs apontadas x R$ {Number(valorHoraUnitario).toFixed(2)} = {(totalHours * Number(valorHoraUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                          </span>
-                        ) : null;
-                      })()}
-                    </div>
 
-                    {/* DESLOCAMENTO */}
-                    <div className="space-y-3">
-                      <h4 className="font-bold text-gray-700 uppercase text-[10px] tracking-wide border-b border-gray-200 pb-1">Deslocamento</h4>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Valor por KM (R$)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={valorKmUnitario || ""}
-                            onChange={(e) => setValorKmUnitario(Number(e.target.value))}
-                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Ex: 2.50"
-                            className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-white font-mono"
-                          />
+                      <div className="bg-white p-4 rounded-lg border border-blue-50 shadow-sm transition-all hover:shadow-md">
+                        <span className="text-blue-500 font-bold block uppercase text-[10px] mb-2 tracking-tight">DESLOCAMENTO REALIZADO:</span>
+                        <div className="flex justify-between items-end">
+                          <strong className="text-2xl font-mono text-blue-900 leading-none">{kmRodado} KM</strong>
+                          <span className="text-[11px] text-blue-400 font-bold mb-0.5">x R$ {Number(valorKmUnitario).toFixed(2)}/km</span>
                         </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Valor Total Deslocamento (R$)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={valorDeslocamento || ""}
-                            onChange={(e) => setValorDeslocamento(Number(e.target.value))}
-                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Ex: 300.00"
-                            className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-white font-mono font-bold text-emerald-600"
-                          />
+                        <div className="text-xs font-extrabold text-blue-700 mt-3 pt-2 border-t border-blue-50 flex justify-between">
+                          <span>Total Realizado:</span>
+                          <span>{(Number(kmRodado) * Number(valorKmUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
                         </div>
                       </div>
-                      {Number(kmRodado) > 0 ? (
-                        <span className="text-[9px] text-gray-400 block">
-                          Calculado automaticamente com base no KM: {kmRodado} km rodados x R$ {Number(valorKmUnitario).toFixed(2)} = {(Number(kmRodado) * Number(valorKmUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                        </span>
-                      ) : null}
-                    </div>
 
-                    {/* OUTRAS DESPESAS */}
-                    <div className="space-y-3 sm:col-span-2 border-t border-gray-200 pt-3">
-                      <h4 className="font-bold text-gray-700 uppercase text-[10px] tracking-wide border-b border-gray-200 pb-1">Outras Despesas e Fatura</h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-white p-4 rounded-lg border border-blue-50 shadow-sm transition-all hover:shadow-md">
+                        <span className="text-blue-500 font-bold block uppercase text-[10px] mb-2 tracking-tight">PEÇAS EM O.S.:</span>
+                        <div className="text-2xl font-mono text-blue-900 font-bold leading-none">
+                          {calcularTotalPecas().toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </div>
+                        <div className="text-[10px] text-blue-400 font-medium mt-3 pt-2 border-t border-blue-50 italic">
+                          (Lançadas na aba de Peças / Insumos)
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SEÇÃO 2: CAMPOS PARA FATURAMENTO (COBRANÇA) */}
+                  <div className="bg-[#f2fdf7] p-4 rounded-xl border border-emerald-100 mb-6">
+                    <h4 className="font-bold text-emerald-800 uppercase text-[11px] tracking-widest pb-2 mb-4 flex items-center gap-2 border-b border-emerald-200/50">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                      VALORES PARA FATURAMENTO (COBRANÇA FINAL)
+                    </h4>
+                    
+                    <div className="space-y-6">
+                      {/* FINANCEIRO ROW */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Despesas Diversas / Serviços de Terceiros (R$)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={outrosCustos || ""}
-                            onChange={(e) => setOutrosCustos(Number(e.target.value))}
-                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Ex: Hospedagem, alimentação, pedágio..."
-                            className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-white font-mono"
-                          />
+                          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">MÃO DE OBRA FATURADA (R$)</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={valorMaoObra || ""}
+                              onChange={(e) => {
+                                setValorMaoObra(Number(e.target.value));
+                                setMaoObraManual(true);
+                              }}
+                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                              className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
+                            />
+                          </div>
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Código NF-e / Fatura Vinculada</label>
+                          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">DESLOCAMENTO FATURADO (R$)</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={valorDeslocamento || ""}
+                              onChange={(e) => {
+                                setValorDeslocamento(Number(e.target.value));
+                                setDeslocamentoManual(true);
+                              }}
+                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                              className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">SERV. TERCEIROS / OUTROS (R$)</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={outrosCustos || ""}
+                              onChange={(e) => setOutrosCustos(Number(e.target.value))}
+                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                              className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* DOCUMENT ROW */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-emerald-100/50">
+                        <div>
+                          <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1.5">Nº NFS (SERVIÇO)</label>
+                          <input
+                            type="text"
+                            value={numNotaFiscal || ""}
+                            onChange={(e) => setNumNotaFiscal(e.target.value)}
+                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                            placeholder="Nº da NFS"
+                            className="w-full border border-emerald-200 focus:border-emerald-500 rounded-lg px-4 py-2 text-sm bg-white font-medium text-emerald-900 outline-none transition-all"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1.5">REFERÊNCIA / OBS. FATURAMENTO</label>
                           <input
                             type="text"
                             value={notaFiscal || ""}
                             onChange={(e) => setNotaFiscal(e.target.value)}
                             disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Nº da Nota Fiscal emitida"
-                            className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-white"
+                            placeholder="Ex: Faturado conforme pedido X..."
+                            className="w-full border border-emerald-200 focus:border-emerald-500 rounded-lg px-4 py-2 text-sm bg-white font-medium text-emerald-900 outline-none transition-all"
                           />
                         </div>
                       </div>
@@ -2251,34 +2607,53 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   </div>
                 </div>
 
-                {/* Costs Sum Overview */}
-                <div className="border border-gray-200 p-5 rounded-xl bg-gray-50 space-y-4">
-                  <h4 className="font-display font-extrabold uppercase text-lg text-brand-ink border-b border-gray-200 pb-1">Orçamento Final do Fechamento</h4>
+
+                {/* Orçamento Final Summary */}
+                <div className="border border-gray-200 p-6 rounded-xl bg-gray-50 shadow-sm">
+                  <h3 className="text-xs font-black uppercase text-gray-800 tracking-widest mb-4">ORÇAMENTO FINAL DO FECHAMENTO</h3>
                   
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-                    <div>
-                      <span className="text-gray-400 font-bold block">Peças / Insumos:</span>
-                      <span className="font-semibold text-gray-800 text-sm mt-0.5 block">{calcularTotalPecas().toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-6 mb-6">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight block">Peças (Informativo):</span>
+                      <span className="font-mono text-xs text-gray-500 block italic font-bold">
+                        {calcularTotalPecas().toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </span>
                     </div>
-                    <div>
-                      <span className="text-gray-400 font-bold block">Mão de Obra / Serviço:</span>
-                      <span className="font-semibold text-gray-800 text-sm mt-0.5 block">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight block">Total Horas:</span>
+                      <span className="font-mono text-sm text-gray-700 font-bold block">{calcularTotalHorasTrabalhadas().toFixed(2)}</span>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight block">Mão de Obra / Serviço:</span>
+                      <span className="font-mono text-sm text-gray-800 font-extrabold block">
                         {Number(valorMaoObra).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                       </span>
                     </div>
-                    <div>
-                      <span className="text-gray-400 font-bold block">Deslocamento (KM):</span>
-                      <span className="font-semibold text-gray-800 text-sm mt-0.5 block">{Number(valorDeslocamento).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight block">Total KM:</span>
+                      <span className="font-mono text-sm text-gray-700 font-bold block">{kmRodado}</span>
                     </div>
-                    <div>
-                      <span className="text-gray-400 font-bold block">Outras Despesas:</span>
-                      <span className="font-semibold text-gray-800 text-sm mt-0.5 block">{Number(outrosCustos).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight block">Deslocamento:</span>
+                      <span className="font-mono text-sm text-gray-800 font-extrabold block">
+                        {Number(valorDeslocamento).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight block">Outras Despesas:</span>
+                      <span className="font-mono text-sm text-gray-800 font-extrabold block">
+                        {Number(outrosCustos).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </span>
                     </div>
                   </div>
 
-                  <div className="border-t border-gray-200 pt-3 flex justify-between items-center text-sm">
-                    <span className="font-bold text-gray-600 uppercase tracking-wide">Faturamento Total Real/Cobrado:</span>
-                    <strong className="font-mono text-xl text-brand-red font-extrabold">{calcularValorTotalOS().toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+                  <div className="border-t border-gray-200 pt-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                    <span className="text-xs font-black text-gray-500 uppercase tracking-widest">FATURAMENTO TOTAL REAL/COBRADO:</span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-brand-red font-mono text-3xl font-black">
+                        {calcularValorTotalOS().toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -2502,7 +2877,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                     <div>
                       <strong className="text-gray-400 uppercase text-[10px] block">Problema Relatado:</strong>
                       <p className="text-gray-700 italic bg-gray-50 p-2 rounded border border-gray-100 whitespace-pre-line leading-relaxed">
-                        {printPreviewOS.reclamacao_cliente || "Nenhuma reclamação registrada."}
+                        {printPreviewOS.reclamacao || "Nenhuma reclamação registrada."}
                       </p>
                     </div>
 
@@ -2583,8 +2958,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                             <td className="p-1.5 font-mono text-gray-500">{p.codigo}</td>
                             <td className="p-1.5 font-bold text-gray-700">{p.descricao}</td>
                             <td className="p-1.5 text-center font-mono">{p.quantidade}</td>
-                            <td className="p-1.5 text-right font-mono">{p.valor_unitario.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
-                            <td className="p-1.5 text-right font-bold font-mono text-gray-800">{(p.quantidade * p.valor_unitario).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
+                            <td className="p-1.5 text-right font-mono">{p.xml_imported ? "—" : p.valor_unitario.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
+                            <td className="p-1.5 text-right font-bold font-mono text-gray-800">{p.xml_imported ? "—" : (p.quantidade * p.valor_unitario).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
                           </tr>
                         ));
                       })()}
@@ -2603,7 +2978,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                           const stored = localStorage.getItem(`gst_os_pecas_${printPreviewOS.id}`);
                           if (stored) parsed = JSON.parse(stored);
                         } catch (e) { console.warn(e); }
-                        const sum = parsed.reduce((acc, curr) => acc + (curr.quantidade * curr.valor_unitario), 0);
+                        const sum = parsed.reduce((acc, curr) => acc + (curr.xml_imported ? 0 : (curr.quantidade * curr.valor_unitario)), 0);
                         return sum.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
                       })()}
                     </strong>
@@ -2649,7 +3024,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                           const stored = localStorage.getItem(`gst_os_pecas_${printPreviewOS.id}`);
                           if (stored) parsed = JSON.parse(stored);
                         } catch (e) { console.warn(e); }
-                        const sumPecas = parsed.reduce((acc, curr) => acc + (curr.quantidade * curr.valor_unitario), 0);
+                        const sumPecas = parsed.reduce((acc, curr) => acc + (curr.xml_imported ? 0 : (curr.quantidade * curr.valor_unitario)), 0);
 
                         const tech = tecnicos.find(t => t.id === printPreviewOS.tecnico_id);
                         const rate = tech?.valor_hora || 0;

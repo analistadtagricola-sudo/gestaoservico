@@ -21,7 +21,9 @@ import {
   Palette,
   Calendar,
   DollarSign,
-  AlertCircle
+  AlertCircle,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
 import { Tecnico } from "../types";
 import { API } from "../lib/api";
@@ -38,6 +40,10 @@ export const TecnicosView: React.FC<TecnicosViewProps> = ({
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTecnico, setEditingTecnico] = useState<Tecnico | null>(null);
+
+  // Sorting State
+  const [sortField, setSortField] = useState<string>("nome");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   // Form states
   const [nome, setNome] = useState("");
@@ -168,6 +174,33 @@ export const TecnicosView: React.FC<TecnicosViewProps> = ({
     );
   });
 
+  const sortedTecnicos = [...filteredTecnicos].sort((a, b) => {
+    let valA: any = a[sortField as keyof Tecnico];
+    let valB: any = b[sortField as keyof Tecnico];
+
+    if (valA === undefined || valA === null) valA = "";
+    if (valB === undefined || valB === null) valB = "";
+
+    if (typeof valA === "string" && typeof valB === "string") {
+      return sortDirection === "asc"
+        ? valA.localeCompare(valB, "pt-BR", { numeric: true })
+        : valB.localeCompare(valA, "pt-BR", { numeric: true });
+    }
+
+    if (valA < valB) return sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const toggleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Toast Alert */}
@@ -238,27 +271,83 @@ export const TecnicosView: React.FC<TecnicosViewProps> = ({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                <th className="p-4 w-12 text-center">ID</th>
-                <th className="p-4">Técnico (Nome Completo)</th>
-                <th className="p-4">Apelido</th>
-                <th className="p-4">Cargo / Função</th>
-                <th className="p-4">Contato</th>
-                <th className="p-4 text-center">Comissão</th>
-                <th className="p-4 text-center">Tarifas (Hora/KM)</th>
-                <th className="p-4 text-center">Status</th>
+              <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                <th className="p-4 w-12 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("id")}>
+                  <div className="flex items-center justify-center gap-1">
+                    ID
+                    {sortField === "id" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("nome")}>
+                  <div className="flex items-center gap-1">
+                    Técnico (Nome Completo)
+                    {sortField === "nome" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("apelido")}>
+                  <div className="flex items-center gap-1">
+                    Apelido
+                    {sortField === "apelido" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("cargo")}>
+                  <div className="flex items-center gap-1">
+                    Cargo / Função
+                    {sortField === "cargo" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("email")}>
+                  <div className="flex items-center gap-1">
+                    Contato
+                    {sortField === "email" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("comissao_tecnico")}>
+                  <div className="flex items-center justify-center gap-1">
+                    Comissão
+                    {sortField === "comissao_tecnico" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("valor_hora")}>
+                  <div className="flex items-center justify-center gap-1">
+                    Tarifas (Hora/KM)
+                    {sortField === "valor_hora" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("ativo")}>
+                  <div className="flex items-center justify-center gap-1">
+                    Status
+                    {sortField === "ativo" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
                 <th className="p-4 text-right w-24">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-xs">
-              {filteredTecnicos.length === 0 ? (
+              {sortedTecnicos.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="p-8 text-center text-gray-400">
                     Nenhum técnico cadastrado ou localizado.
                   </td>
                 </tr>
               ) : (
-                filteredTecnicos.map((t) => (
+                sortedTecnicos.map((t) => (
                   <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="p-4 text-center font-semibold text-gray-400">#{t.id}</td>
                     <td className="p-4 font-bold text-brand-ink">

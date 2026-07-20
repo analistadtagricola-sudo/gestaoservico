@@ -97,6 +97,8 @@ export interface OrdemServico {
   valor_mao_obra?: number;
   valor_terceiros?: number;
   nota_fiscal?: string;
+  num_nota_fiscal?: string;
+  data_nota_fiscal?: string;
   valor_total?: number;
   horimetro_final?: number;
   revisao_executada?: string;
@@ -185,5 +187,22 @@ export interface Usuario {
   ultimo_acesso?: string;
   foto?: string;
   senha: string;
+}
+
+export interface Veiculo {
+  id?: number;
+  placa: string;
+  modelo: string;
+  marca?: string;
+  ano?: number;
+  ativo?: boolean;
+  observacao?: string;
+}
+
+export interface TipoAtendimento {
+  id?: number;
+  nome: string;
+  descricao?: string;
+  ativo?: boolean;
 }
 

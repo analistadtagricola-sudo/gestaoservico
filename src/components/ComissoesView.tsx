@@ -22,7 +22,9 @@ import {
   Filter,
   User,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
 import { OrdemServico, Tecnico } from "../types";
 
@@ -62,8 +64,6 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
   const [formDescricao, setFormDescricao] = useState("");
   const [formStatus, setFormStatus] = useState<"PENDENTE" | "PAGO">("PENDENTE");
 
-  // Commission Rule Settings (can be configured in UI)
-  const [commissionRate, setCommissionRate] = useState<number>(50); // 50% default of labor value
 
   // Local state for payment statuses of auto-generated commissions from O.S.
   // stored by OS ID in localStorage
@@ -71,6 +71,10 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
 
   const [isLoading, setIsLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+
+  // Sorting State
+  const [sortField, setSortField] = useState<string>("data");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   useEffect(() => {
     // Load manual commission records from localStorage
@@ -102,29 +106,111 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
   const getAutoCommissions = () => {
     const finalized = ordens.filter(o => o.status === "FINALIZADA");
     
-    return finalized.map(o => {
-      const tech = tecnicos.find(t => t.id === o.tecnico_id);
+    const commissions: any[] = [];
+    
+    finalized.forEach(o => {
       const laborValue = Number(o.valor_mao_obra) || 0;
+      const displacementValue = Number(o.valor_deslocamento) || 0;
+      const totalBaseValue = laborValue + displacementValue;
+      const tech = tecnicos.find(t => t.id === o.tecnico_id);
+      const techRate = tech?.comissao_tecnico || 0;
       
-      // Commission is 50% (or custom commissionRate%) of labor value + optional full mileage/travel refund if technician got it
-      // Let's assume standard commission is just % of labor value
-      const calculatedValue = laborValue * (commissionRate / 100);
-      const isPaid = paidOSIds[o.id!] || false;
+      // Client/Implement details
+      const clienteNome = o.clientes?.razao_social || "N/A";
+      const equipModelo = o.implementos?.modelo || "N/A";
+      const equipSerie = o.implementos?.numero_serie || "N/A";
+      const tipoOS = o.tipo_atendimento || "N/A";
+      const totalOS = o.valor_total || 0;
+      
+      const isEntregaTecnica = o.tipo_atendimento?.toLowerCase().includes("entrega técnica");
+      
+      let valorFixoEntregaTecnica = 0;
+      const savedConfig = localStorage.getItem("gst_comissoes_config");
+      if (savedConfig) {
+        try {
+          const parsed = JSON.parse(savedConfig);
+          const regras = parsed.regrasEntrega || [];
+          const regra = regras.find((r: any) => o.tipo_atendimento?.toLowerCase() === r.tipo.toLowerCase());
+          if (regra) {
+            valorFixoEntregaTecnica = parseFloat(regra.valor) || 0;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+      
+      // Main Technician
+      if (o.tecnico_id && tech) {
+        let calculatedValue;
+        
+        if (isEntregaTecnica) {
+           calculatedValue = valorFixoEntregaTecnica;
+           if (o.auxiliar_id) calculatedValue = calculatedValue / 2;
+        } else {
+          calculatedValue = totalBaseValue * (techRate / 100);
+          
+          // If auxiliary exists, technician only gets half
+          if (o.auxiliar_id) {
+            calculatedValue = calculatedValue / 2;
+          }
+        }
+        
+        const isPaid = paidOSIds[`${o.id}-tech`] || false;
+        
+        commissions.push({
+          id: `OS-${o.id}-tech`,
+          os_id: o.id,
+          numero_os: o.numero_os,
+          tecnico_id: o.tecnico_id,
+          tecnico_nome: tech.apelido || tech.nome || "Técnico Não Definido",
+          data: o.data_termino || o.data_atendimento || o.created_at || "",
+          valor_os: totalOS,
+          valor_mao_obra: laborValue,
+          valor_comissao: calculatedValue,
+          status: isPaid ? "PAGO" : "PENDENTE" as "PAGO" | "PENDENTE",
+          descricao: `Comissão automática O.S. ${o.numero_os} (Técnico)${o.auxiliar_id ? ' (50%)' : ''}`,
+          cliente_nome: clienteNome,
+          equipamento_modelo: equipModelo,
+          equipamento_serie: equipSerie,
+          tipo_os: tipoOS
+        });
+      }
 
-      return {
-        id: `OS-${o.id}`,
-        os_id: o.id,
-        numero_os: o.numero_os,
-        tecnico_id: o.tecnico_id,
-        tecnico_nome: tech?.apelido || tech?.nome || "Técnico Não Definido",
-        data: o.data_termino || o.data_atendimento || o.created_at || "",
-        valor_os: o.valor_total || 0,
-        valor_mao_obra: laborValue,
-        valor_comissao: calculatedValue,
-        status: isPaid ? "PAGO" : "PENDENTE" as "PAGO" | "PENDENTE",
-        descricao: `Comissão automática O.S. ${o.numero_os}`
-      };
+      // Auxiliary Technician
+      if (o.auxiliar_id) {
+        const aux = tecnicos.find(t => t.id === o.auxiliar_id);
+        if (aux) {
+          let calculatedValue;
+          if (isEntregaTecnica) {
+             calculatedValue = valorFixoEntregaTecnica / 2;
+          } else {
+             // Auxiliary gets half of the technician's base commission
+             calculatedValue = (totalBaseValue * (techRate / 100)) / 2;
+          }
+          const isPaid = paidOSIds[`${o.id}-aux`] || false;
+          
+          commissions.push({
+            id: `OS-${o.id}-aux`,
+            os_id: o.id,
+            numero_os: o.numero_os,
+            tecnico_id: o.auxiliar_id,
+            tecnico_nome: aux.apelido || aux.nome || "Auxiliar Não Definido",
+            data: o.data_termino || o.data_atendimento || o.created_at || "",
+            valor_os: totalOS,
+            valor_mao_obra: laborValue,
+            valor_comissao: calculatedValue,
+            status: isPaid ? "PAGO" : "PENDENTE" as "PAGO" | "PENDENTE",
+            descricao: `Comissão automática O.S. ${o.numero_os} (Auxiliar) (50%)`,
+            cliente_nome: clienteNome,
+            equipamento_modelo: equipModelo,
+            equipamento_serie: equipSerie,
+            tipo_os: tipoOS
+          });
+        }
+      }
     });
+
+    return commissions;
   };
 
   // Combine automatic and manual commissions
@@ -138,7 +224,13 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
       descricao: ac.descricao,
       status: ac.status,
       isManual: false,
-      os_id: ac.os_id
+      os_id: ac.os_id,
+      payment_key: ac.id, // Use unique key for payment toggle
+      cliente_nome: ac.cliente_nome,
+      equipamento_modelo: ac.equipamento_modelo,
+      equipamento_serie: ac.equipamento_serie,
+      tipo_os: ac.tipo_os,
+      valor_os: ac.valor_os
     }));
 
     const manualComms = comissoesManuais.map(mc => {
@@ -162,7 +254,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
   // Filter commissions
   const getFilteredCommissions = () => {
     const all = getAllCommissions();
-    return all.filter(c => {
+    const filtered = all.filter(c => {
       // Search term filter
       const q = searchTerm.toLowerCase();
       const matchesSearch = c.tecnico_nome.toLowerCase().includes(q) || c.descricao.toLowerCase().includes(q);
@@ -175,14 +267,46 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
 
       return matchesSearch && matchesTech && matchesStatus;
     });
+
+    return [...filtered].sort((a, b) => {
+      let valA: any = a[sortField as keyof any];
+      let valB: any = b[sortField as keyof any];
+
+      if (sortField === "tecnico_nome") {
+        valA = a.tecnico_nome || "";
+        valB = b.tecnico_nome || "";
+      }
+
+      if (valA === undefined || valA === null) valA = "";
+      if (valB === undefined || valB === null) valB = "";
+
+      if (typeof valA === "string" && typeof valB === "string") {
+        return sortDirection === "asc"
+          ? valA.localeCompare(valB, "pt-BR", { numeric: true })
+          : valB.localeCompare(valA, "pt-BR", { numeric: true });
+      }
+
+      if (valA < valB) return sortDirection === "asc" ? -1 : 1;
+      if (valA > valB) return sortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+  };
+
+  const toggleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
   };
 
   // Handle Commission Payment Status toggle for O.S.
-  const handleToggleOSPayment = (osId: number) => {
-    const updated = { ...paidOSIds, [osId]: !paidOSIds[osId] };
+  const handleToggleOSPayment = (paymentKey: string) => {
+    const updated = { ...paidOSIds, [paymentKey]: !paidOSIds[paymentKey] };
     setPaidOSIds(updated);
     localStorage.setItem("gst_comissoes_os_pagas", JSON.stringify(updated));
-    showToast(updated[osId] ? "Comissão marcada como PAGA!" : "Comissão estornada para PENDENTE.");
+    showToast(updated[paymentKey] ? "Comissão marcada como PAGA!" : "Comissão estornada para PENDENTE.");
   };
 
   // Manual commissions CRUD actions
@@ -283,23 +407,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="bg-white px-4 py-2 rounded-xl border border-gray-200 flex items-center gap-3 shadow-sm">
-            <span className="font-bold text-gray-500 uppercase text-[10px] flex items-center gap-1">
-              <Percent className="w-3.5 h-3.5 text-brand-red" />
-              Taxa de Comissão:
-            </span>
-            <div className="flex items-center gap-1">
-              <input
-                type="number"
-                min={0}
-                max={100}
-                value={commissionRate}
-                onChange={(e) => setCommissionRate(Math.min(100, Math.max(0, Number(e.target.value))))}
-                className="w-12 border border-gray-200 rounded px-1.5 py-0.5 text-center font-bold text-brand-ink"
-              />
-              <span className="font-bold text-gray-500">% da M.O.</span>
-            </div>
-          </div>
+
 
           <button
             onClick={() => openForm(null)}
@@ -417,20 +525,64 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                <th className="p-4 w-28">Data</th>
-                <th className="p-4">Técnico Beneficiário</th>
-                <th className="p-4">Descrição da Comissão / Origem</th>
-                <th className="p-4">Tipo</th>
-                <th className="p-4 text-center">Status</th>
-                <th className="p-4 text-right">Valor Líquido</th>
-                <th className="p-4 text-right w-36">Ações / Pagamentos</th>
+              <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                <th className="p-4 w-28 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("data")}>
+                  <div className="flex items-center gap-1">
+                    Data
+                    {sortField === "data" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("tecnico_nome")}>
+                  <div className="flex items-center gap-1">
+                    Técnico Beneficiário
+                    {sortField === "tecnico_nome" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors">Cliente / Equipamento</th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors">Tipo / Valor O.S.</th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("descricao")}>
+                  <div className="flex items-center gap-1">
+                    Descrição
+                    {sortField === "descricao" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("isManual")}>
+                  <div className="flex items-center gap-1">
+                    Tipo
+                    {sortField === "isManual" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("status")}>
+                  <div className="flex items-center justify-center gap-1">
+                    Status
+                    {sortField === "status" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 text-right cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("valor")}>
+                  <div className="flex items-center justify-end gap-1">
+                    Valor Líquido
+                    {sortField === "valor" && (
+                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                    )}
+                  </div>
+                </th>
+                <th className="p-4 text-right w-36">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-xs">
               {filteredComms.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-gray-400">
+                  <td colSpan={9} className="p-8 text-center text-gray-400">
                     Nenhum registro de comissão correspondente aos filtros.
                   </td>
                 </tr>
@@ -446,6 +598,14 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
                     <td className="p-4 font-bold text-brand-ink">
                       {comm.tecnico_nome}
                     </td>
+                    <td className="p-4 text-gray-600">
+                      <div className="font-semibold">{comm.cliente_nome || "—"}</div>
+                      <div className="text-[10px] text-gray-400">{comm.equipamento_modelo || "—"} | SÉRIE: {comm.equipamento_serie || "—"}</div>
+                    </td>
+                    <td className="p-4 text-gray-600">
+                      <div className="font-semibold">{comm.tipo_os || "—"}</div>
+                      <div className="text-[10px] text-gray-400">O.S.: {comm.valor_os?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) || "R$ 0,00"}</div>
+                    </td>
                     <td className="p-4 text-gray-600 font-semibold max-w-xs truncate">
                       {comm.descricao}
                     </td>
@@ -455,7 +615,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
                           ? "bg-purple-50 text-purple-700 border-purple-100" 
                           : "bg-blue-50 text-blue-700 border-blue-100"
                       }`}>
-                        {comm.isManual ? "MANUAL / AJUSTE" : "AUTO (O.S.)"}
+                        {comm.isManual ? "MANUAL" : "AUTO"}
                       </span>
                     </td>
                     <td className="p-4 text-center">
@@ -490,7 +650,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
                         </>
                       ) : (
                         <button
-                          onClick={() => comm.os_id && handleToggleOSPayment(comm.os_id)}
+                          onClick={() => comm.payment_key && handleToggleOSPayment(comm.payment_key)}
                           className={`px-2.5 py-1 text-[10px] font-extrabold uppercase rounded transition-colors ${
                             comm.status === "PAGO"
                               ? "bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-700 border border-gray-200"

@@ -43,14 +43,14 @@ import { UsuariosView } from "./components/UsuariosView";
 import { EmpresaView } from "./components/EmpresaView";
 import { LoginView } from "./components/LoginView";
 import { LayoutView } from "./components/LayoutView";
+import { ComissoesConfigView } from "./components/ComissoesConfigView";
 import { ConfigAgendaView } from "./components/ConfigAgendaView";
 import { IntegracoesView } from "./components/IntegracoesView";
-import { NumeracaoOSView } from "./components/NumeracaoOSView";
 import { BackupView } from "./components/BackupView";
 import { LogsView } from "./components/LogsView";
 import { SobreView } from "./components/SobreView";
 
-type ActiveView = "dashboard" | "os" | "agenda" | "clientes" | "implementos" | "tecnicos" | "planos" | "relatorios" | "comissoes" | "usuarios" | "veiculos" | "tipos_atendimento" | "empresa" | "layout" | "config_agenda" | "integracoes" | "numeracao_os" | "backup" | "logs" | "sobre";
+type ActiveView = "dashboard" | "os" | "agenda" | "clientes" | "implementos" | "tecnicos" | "planos" | "relatorios" | "comissoes" | "usuarios" | "veiculos" | "tipos_atendimento" | "empresa" | "layout" | "config_agenda" | "comissoes_config" | "integracoes" | "backup" | "logs" | "sobre";
 
 interface WorkspaceTab {
   id: string; // unique tab identifier
@@ -273,10 +273,11 @@ export function AppContent() {
     { id: "empresa", label: "Empresa", icon: Settings, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "layout", label: "Layout", icon: Settings, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "config_agenda", label: "Agenda (Config)", icon: Calendar, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
+    { id: "comissoes_config", label: "Comissões (Config)", icon: DollarSign, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "integracoes", label: "Integrações", icon: Database, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
-    { id: "numeracao_os", label: "Numeração das O.S.", icon: ClipboardList, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "backup", label: "Backup", icon: RefreshCw, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "logs", label: "Logs", icon: Settings, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
+    { id: "planos", label: "Planos de Manutenção", icon: ClipboardList, category: "CADASTROS", permissionKey: "configuracoes" as keyof Permissions },
     { id: "sobre", label: "Sobre", icon: HelpCircle, category: "ADMINISTRAÇÃO", permissionKey: "dashboard" as keyof Permissions }
   ];
 
@@ -727,8 +728,8 @@ export function AppContent() {
                   {activeTab.view === "empresa" && <EmpresaView />}
                   {activeTab.view === "layout" && <LayoutView />}
                   {activeTab.view === "config_agenda" && <ConfigAgendaView />}
+                  {activeTab.view === "comissoes_config" && <ComissoesConfigView />}
                   {activeTab.view === "integracoes" && <IntegracoesView onRefresh={fetchAllData} />}
-                  {activeTab.view === "numeracao_os" && <NumeracaoOSView />}
                   {activeTab.view === "backup" && <BackupView />}
                   {activeTab.view === "logs" && <LogsView />}
                   {activeTab.view === "sobre" && <SobreView />}

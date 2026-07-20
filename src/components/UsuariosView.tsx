@@ -13,6 +13,7 @@ import {
   Camera,
   Save
 } from "lucide-react";
+import { API } from "../lib/api";
 
 export interface Permission {
   consultar: boolean;
@@ -61,7 +62,7 @@ export const PRESET_USUARIOS: Usuario[] = [
     email: "admin@oficina.com.br",
     perfil: "ADMINISTRADOR",
     ativo: true,
-    senha: "admin",
+    senha: "142536",
     permissoes: {
       dashboard: { consultar: true, editar: true, excluir: true },
       clientes: { consultar: true, editar: true, excluir: true },
@@ -123,67 +124,31 @@ export const UsuariosView: React.FC = () => {
 
   const [toast, setToast] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
-  useEffect(() => {
-    const stored = localStorage.getItem("gst_usuarios_v1");
-    if (stored) {
-      try {
-        let parsed = JSON.parse(stored);
-        
-        // Migration: check if first user has 'permissoes' property
-        if (parsed.length > 0 && !parsed[0].permissoes) {
-          parsed = parsed.map((u: any) => ({
-            ...u,
-            permissoes: {
-              ...DEFAULT_PERMISSIONS,
-              os: { consultar: u.perm_criar_os, editar: u.perm_criar_os, excluir: false },
-              financeiro: { consultar: u.perm_financeiro, editar: u.perm_financeiro, excluir: false },
-              configuracoes: { consultar: u.perm_configuracoes, editar: u.perm_configuracoes, excluir: false }
-            }
-          }));
-          localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsed));
+  const loadUsuarios = async () => {
+    try {
+      const data = await API.usuarios.listar();
+      setUsuarios(data);
+      
+      const activeUsr = localStorage.getItem("gst_current_active_user");
+      if (activeUsr) {
+        try {
+          const parsed = JSON.parse(activeUsr);
+          const current = data.find(u => u.id === parsed.id) || parsed;
+          setCurrentUser(current);
+        } catch (e) {
+          if (data.length > 0) setCurrentUser(data[0]);
         }
-        
-        // Guarantee default admin user exists
-        const hasAdmin = parsed.some((u: any) => u.usuario === "admin");
-        if (!hasAdmin) {
-          parsed.unshift(PRESET_USUARIOS[0]);
-          localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsed));
-        }
-        
-        setUsuarios(parsed);
-      } catch (e) {
-        setUsuarios(PRESET_USUARIOS);
+      } else if (data.length > 0) {
+        setCurrentUser(data[0]);
+        localStorage.setItem("gst_current_active_user", JSON.stringify(data[0]));
       }
-    } else {
-      setUsuarios(PRESET_USUARIOS);
-      localStorage.setItem("gst_usuarios_v1", JSON.stringify(PRESET_USUARIOS));
+    } catch (err) {
+      console.error("Error loading users:", err);
     }
+  };
 
-    // Set active simulation session
-    const activeUsr = localStorage.getItem("gst_current_active_user");
-    if (activeUsr) {
-      try {
-        let parsed = JSON.parse(activeUsr);
-        if (!parsed.permissoes) {
-          parsed = {
-            ...parsed,
-            permissoes: {
-              ...DEFAULT_PERMISSIONS,
-              os: { consultar: parsed.perm_criar_os, editar: parsed.perm_criar_os, excluir: false },
-              financeiro: { consultar: parsed.perm_financeiro, editar: parsed.perm_financeiro, excluir: false },
-              configuracoes: { consultar: parsed.perm_configuracoes, editar: parsed.perm_configuracoes, excluir: false }
-            }
-          };
-          localStorage.setItem("gst_current_active_user", JSON.stringify(parsed));
-        }
-        setCurrentUser(parsed);
-      } catch (e) {
-        setCurrentUser(PRESET_USUARIOS[0]);
-      }
-    } else {
-      setCurrentUser(PRESET_USUARIOS[0]);
-      localStorage.setItem("gst_current_active_user", JSON.stringify(PRESET_USUARIOS[0]));
-    }
+  useEffect(() => {
+    loadUsuarios();
   }, []);
 
   const showToast = (text: string, type: "success" | "error" = "success") => {
@@ -197,62 +162,56 @@ export const UsuariosView: React.FC = () => {
     showToast(`Sessão alterada para: ${usr.nome} (${usr.perfil})`, "success");
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nome.trim() || !usuario.trim() || !email.trim()) {
       showToast("Por favor, preencha todos os campos obrigatórios.", "error");
       return;
     }
 
-    let updatedList = [...usuarios];
-
-    if (editingId) {
-      updatedList = updatedList.map(u => {
-        if (u.id === editingId) {
-          return {
-            ...u,
-            nome,
-            usuario: usuario.toLowerCase().replace(/\s+/g, ""),
-            email,
-            perfil,
-            ativo,
-            permissoes,
-            foto,
-            senha: senha || u.senha
-          };
+    try {
+      if (editingId) {
+        const existing = usuarios.find(u => u.id === editingId);
+        const updatedUser: Usuario = {
+          id: editingId,
+          nome,
+          usuario: usuario.toLowerCase().replace(/\s+/g, ""),
+          email,
+          perfil,
+          ativo,
+          permissoes,
+          foto,
+          senha: senha || (existing ? existing.senha : "")
+        };
+        await API.usuarios.atualizar(editingId, updatedUser);
+        showToast("Usuário atualizado com sucesso!");
+        
+        if (currentUser?.id === editingId) {
+          setCurrentUser(updatedUser);
+          localStorage.setItem("gst_current_active_user", JSON.stringify(updatedUser));
         }
-        return u;
-      });
-      showToast("Usuário atualizado com sucesso!");
-    } else {
-      const newUsr: Usuario = {
-        id: "usr_" + Date.now(),
-        nome,
-        usuario: usuario.toLowerCase().replace(/\s+/g, ""),
-        email,
-        perfil,
-        ativo,
-        permissoes,
-        ultimo_acesso: "Nunca",
-        foto,
-        senha
-      };
-      updatedList.push(newUsr);
-      showToast("Novo operador cadastrado!");
-    }
-
-    setUsuarios(updatedList);
-    localStorage.setItem("gst_usuarios_v1", JSON.stringify(updatedList));
-    
-    if (editingId && currentUser?.id === editingId) {
-      const updatedUser = updatedList.find(u => u.id === editingId);
-      if (updatedUser) {
-        setCurrentUser(updatedUser);
-        localStorage.setItem("gst_current_active_user", JSON.stringify(updatedUser));
+      } else {
+        const newUsr: Usuario = {
+          id: "usr_" + Date.now(),
+          nome,
+          usuario: usuario.toLowerCase().replace(/\s+/g, ""),
+          email,
+          perfil,
+          ativo,
+          permissoes,
+          ultimo_acesso: "Nunca",
+          foto,
+          senha
+        };
+        await API.usuarios.inserir(newUsr);
+        showToast("Novo operador cadastrado!");
       }
+      await loadUsuarios();
+      closeForm();
+    } catch (err) {
+      console.error(err);
+      showToast("Erro ao salvar operador", "error");
     }
-
-    closeForm();
   };
 
   const openForm = (usr?: Usuario) => {
@@ -285,16 +244,20 @@ export const UsuariosView: React.FC = () => {
     setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (id === currentUser?.id) {
       showToast("Você não pode deletar o usuário que está ativo na sua sessão simulada atual.", "error");
       return;
     }
     if (window.confirm("Deseja realmente remover este operador do sistema?")) {
-      const filtered = usuarios.filter(u => u.id !== id);
-      setUsuarios(filtered);
-      localStorage.setItem("gst_usuarios_v1", JSON.stringify(filtered));
-      showToast("Operador removido com sucesso!");
+      try {
+        await API.usuarios.excluir(id);
+        showToast("Operador removido com sucesso!");
+        await loadUsuarios();
+      } catch (err) {
+        console.error(err);
+        showToast("Erro ao remover operador", "error");
+      }
     }
   };
 
@@ -336,48 +299,6 @@ export const UsuariosView: React.FC = () => {
           </button>
       </div>
 
-      {/* Access Simulator Widget */}
-      <div className="bg-brand-ink text-white rounded-xl p-5 border border-gray-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-rose-600/10 text-brand-red rounded-lg border border-brand-red/30">
-            <Lock className="w-6 h-6 animate-pulse" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">Simulador de Sessão Ativa</span>
-              <span className="bg-rose-600 text-white text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase">Ativo</span>
-            </div>
-            <h3 className="font-display text-base font-extrabold uppercase mt-0.5">
-              Usuário Logado: <span className="text-brand-red">{currentUser?.nome}</span>
-            </h3>
-            <p className="text-[11px] text-gray-400">
-              Nível: <strong className="text-white font-mono">{currentUser?.perfil}</strong> | 
-              Faturamento: <strong className={currentUser?.perm_faturar ? "text-emerald-400" : "text-rose-400"}>{currentUser?.perm_faturar ? "SIM" : "NÃO"}</strong> | 
-              Emitir O.S.: <strong className={currentUser?.perm_criar_os ? "text-emerald-400" : "text-rose-400"}>{currentUser?.perm_criar_os ? "SIM" : "NÃO"}</strong>
-            </p>
-          </div>
-        </div>
-
-        {/* Quick Switch Switcher */}
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Alternar Operador:</span>
-          <select
-            value={currentUser?.id || ""}
-            onChange={(e) => {
-              const selected = usuarios.find(u => u.id === e.target.value);
-              if (selected) handleSwitchSession(selected);
-            }}
-            className="bg-gray-800 border border-gray-700 rounded-lg py-1 px-3 text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-brand-red"
-          >
-            {usuarios.map(u => (
-              <option key={u.id} value={u.id}>
-                {u.nome} ({u.perfil})
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
       {/* Main Grid: User List */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         {/* Search header bar */}
@@ -393,100 +314,153 @@ export const UsuariosView: React.FC = () => {
             />
           </div>
           <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-            Total Cadastrado: <strong className="text-gray-700">{usuarios.length}</strong>
+            Total Cadastrado: <strong className="text-gray-700">{usuarios.filter((u, idx, self) => self.findIndex(t => t.id === u.id) === idx).length}</strong>
           </span>
         </div>
 
-        {/* User cards list */}
-        <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredUsuarios.map((usr) => {
-              const isSimulatedActive = usr.id === currentUser?.id;
-              return (
-                <div 
-                  key={usr.id} 
-                  className={`border rounded-xl p-5 space-y-4 transition-all relative ${
-                    isSimulatedActive 
-                      ? "border-brand-red bg-rose-50/5 shadow-md" 
-                      : "border-gray-200 hover:border-gray-300 hover:shadow-sm"
-                  }`}
-                >
-                  {isSimulatedActive && (
-                    <span className="absolute top-4 right-4 bg-rose-600 text-white text-[8px] font-black tracking-widest px-1.5 py-0.5 rounded uppercase flex items-center gap-1">
-                      <UserCheck className="w-2.5 h-2.5" /> ATIVO AGORA
-                    </span>
-                  )}
-
-                  {/* Profile info header */}
-                  <div className="flex items-start gap-3">
-                    <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center font-display text-lg text-gray-600 font-black uppercase overflow-hidden shrink-0">
-                      {usr.foto ? (
-                        <img src={usr.foto} alt={usr.nome} className="w-full h-full object-cover" />
-                      ) : (
-                        usr.nome.substring(0, 2)
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-gray-800 text-sm leading-tight flex items-center gap-1.5">
-                        {usr.nome}
-                      </h3>
-                      <p className="text-xs text-gray-400 font-mono">@{usr.usuario}</p>
-                    </div>
-                  </div>
-
-                  <div className="text-xs space-y-1 text-gray-600 font-medium">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400 font-bold uppercase text-[9px]">E-mail:</span>
-                      <span className="truncate max-w-[150px]" title={usr.email}>{usr.email}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400 font-bold uppercase text-[9px]">Função:</span>
-                      <span className="font-mono text-[10px] font-bold text-brand-red">{usr.perfil}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400 font-bold uppercase text-[9px]">Último Acesso:</span>
-                      <span>{usr.ultimo_acesso || "Nunca"}</span>
-                    </div>
-                  </div>
-
-                  {/* Permissions matrix visual summary */}
-                  <div className="bg-gray-50 border border-gray-150 rounded-lg p-3 space-y-1.5">
-                    <span className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider block">Permissões</span>
-                    <div className="grid grid-cols-2 gap-y-1 text-[10px]">
-                      {Object.entries(usr.permissoes as Permissions).map(([module, p]) => (
-                        <div key={module} className="flex items-center gap-1">
-                          <span className={`w-1.5 h-1.5 rounded-full ${p.consultar ? "bg-emerald-500" : "bg-gray-300"}`} />
-                          <span className={p.consultar ? "text-gray-700 font-bold" : "text-gray-400 font-medium"}>
-                            {module.charAt(0).toUpperCase() + module.slice(1)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Actions buttons */}
-                  <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
-                    <button
-                      type="button"
-                      onClick={() => openForm(usr)}
-                      className="text-xs font-semibold text-gray-600 hover:text-brand-ink px-2 py-1 rounded"
+        {/* User Table Layout */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50/75 border-b border-gray-200 text-[10px] font-black uppercase text-gray-400 tracking-wider select-none">
+                <th className="px-6 py-4">Operador</th>
+                <th className="px-6 py-4">Usuário</th>
+                <th className="px-6 py-4">E-mail</th>
+                <th className="px-6 py-4">Função / Perfil</th>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4">Último Acesso</th>
+                <th className="px-6 py-4">Permissões (Módulos)</th>
+                <th className="px-6 py-4 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {(() => {
+                const uniqueFilteredUsuarios = filteredUsuarios.filter((u, idx, self) => self.findIndex(t => t.id === u.id) === idx);
+                if (uniqueFilteredUsuarios.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-12 text-center text-gray-400 text-xs font-semibold uppercase">
+                        Nenhum operador encontrado
+                      </td>
+                    </tr>
+                  );
+                }
+                return uniqueFilteredUsuarios.map((usr) => {
+                  const isSimulatedActive = usr.id === currentUser?.id;
+                  return (
+                    <tr 
+                      key={usr.id} 
+                      className={`hover:bg-gray-50/50 transition-colors text-xs text-gray-700 font-medium ${
+                        isSimulatedActive ? "bg-rose-50/20" : ""
+                      }`}
                     >
-                      Editar
-                    </button>
-                    {!isSimulatedActive && (
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(usr.id)}
-                        className="text-xs font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" /> Excluir
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                      {/* Name & Photo */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center font-display text-sm text-gray-600 font-black uppercase overflow-hidden shrink-0 border border-gray-200">
+                            {usr.foto ? (
+                              <img src={usr.foto} alt={usr.nome} className="w-full h-full object-cover" />
+                            ) : (
+                              usr.nome.substring(0, 2)
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-bold text-gray-900 flex items-center gap-1.5">
+                              {usr.nome}
+                              {isSimulatedActive && (
+                                <span className="bg-rose-600 text-white text-[8px] font-black tracking-widest px-1.5 py-0.5 rounded-full uppercase flex items-center gap-0.5 shrink-0">
+                                  <UserCheck className="w-2 h-2" /> ATIVO
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-gray-400 font-mono font-bold uppercase">ID: {usr.id}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Username */}
+                      <td className="px-6 py-4 font-mono text-gray-500 font-bold">
+                        @{usr.usuario}
+                      </td>
+
+                      {/* Email */}
+                      <td className="px-6 py-4 text-gray-600">
+                        {usr.email}
+                      </td>
+
+                      {/* Profile Badge */}
+                      <td className="px-6 py-4">
+                        <span className="px-2 py-1 rounded text-[10px] font-extrabold font-mono tracking-wide bg-gray-100 text-gray-800">
+                          {usr.perfil}
+                        </span>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider uppercase ${
+                          usr.ativo 
+                            ? "bg-emerald-100 text-emerald-800" 
+                            : "bg-gray-150 text-gray-500"
+                        }`}>
+                          {usr.ativo ? "ATIVO" : "INATIVO"}
+                        </span>
+                      </td>
+
+                      {/* Last Access */}
+                      <td className="px-6 py-4 text-gray-500">
+                        {usr.ultimo_acesso || "Nunca"}
+                      </td>
+
+                      {/* Compact Permissions Dots */}
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-1 max-w-[200px]">
+                          {Object.entries(usr.permissoes || {}).map(([module, p]: [string, any]) => {
+                            const initials = module.substring(0, 2).toUpperCase();
+                            const hasAccess = p && p.consultar;
+                            return (
+                              <span 
+                                key={module} 
+                                title={`${module.toUpperCase()}: ${hasAccess ? 'Liberado' : 'Bloqueado'}`}
+                                className={`text-[9px] font-black tracking-wider px-1 py-0.5 rounded-md ${
+                                  hasAccess 
+                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
+                                    : "bg-gray-50 text-gray-400 border border-gray-100"
+                                }`}
+                              >
+                                {initials}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </td>
+
+                      {/* Action buttons */}
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openForm(usr)}
+                            className="text-xs font-bold text-gray-600 hover:text-brand-ink hover:bg-gray-100 px-2 py-1 rounded transition-colors"
+                          >
+                            Editar
+                          </button>
+                          {!isSimulatedActive && (
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(usr.id)}
+                              className="text-xs font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Excluir
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
         </div>
       </div>
 

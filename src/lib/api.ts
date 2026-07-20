@@ -4,7 +4,7 @@
  */
 
 import { supabase } from "./supabase";
-import { Cliente, Implemento, Tecnico, OrdemServico, Apontamento, PlanoManutencao, PlanoRevisao } from "../types";
+import { Cliente, Implemento, Tecnico, OrdemServico, Apontamento, PlanoManutencao, PlanoRevisao, Veiculo, TipoAtendimento, Usuario, Permissions } from "../types";
 
 // Helper to handle API responses and fallbacks
 const handleResponse = async <T>(promise: Promise<{ data: T | null; error: any }>, fallback: T): Promise<T> => {
@@ -20,6 +20,80 @@ const handleResponse = async <T>(promise: Promise<{ data: T | null; error: any }
     return fallback;
   }
 };
+
+const DEFAULT_PERMISSIONS_LOCAL: Permissions = {
+  dashboard: { consultar: true, editar: false, excluir: false },
+  clientes: { consultar: true, editar: true, excluir: false },
+  implementos: { consultar: true, editar: true, excluir: false },
+  os: { consultar: true, editar: true, excluir: false },
+  agenda: { consultar: true, editar: true, excluir: false },
+  financeiro: { consultar: true, editar: false, excluir: false },
+  configuracoes: { consultar: false, editar: false, excluir: false }
+};
+
+const INITIAL_USUARIOS: Usuario[] = [
+  {
+    id: "usr_1",
+    nome: "Administrador (Padrão)",
+    usuario: "admin",
+    email: "admin@oficina.com.br",
+    perfil: "ADMINISTRADOR",
+    ativo: true,
+    senha: "142536",
+    permissoes: {
+      dashboard: { consultar: true, editar: true, excluir: true },
+      clientes: { consultar: true, editar: true, excluir: true },
+      implementos: { consultar: true, editar: true, excluir: true },
+      os: { consultar: true, editar: true, excluir: true },
+      agenda: { consultar: true, editar: true, excluir: true },
+      financeiro: { consultar: true, editar: true, excluir: true },
+      configuracoes: { consultar: true, editar: true, excluir: true }
+    },
+    ultimo_acesso: "Hoje, 10:35"
+  },
+  {
+    id: "usr_2",
+    nome: "Amanda Costa",
+    usuario: "amanda.faturamento",
+    email: "faturamento@oficina.com.br",
+    perfil: "FATURISTA",
+    ativo: true,
+    senha: "123",
+    permissoes: {
+      ...DEFAULT_PERMISSIONS_LOCAL,
+      os: { consultar: true, editar: true, excluir: false },
+      financeiro: { consultar: true, editar: true, excluir: false }
+    },
+    ultimo_acesso: "Ontem, 16:40"
+  },
+  {
+    id: "usr_3",
+    nome: "Marcos Souza (Mecânico Líder)",
+    usuario: "marcos.mecanico",
+    email: "marcos.campo@oficina.com.br",
+    perfil: "TECNICO",
+    ativo: true,
+    senha: "123",
+    permissoes: {
+      ...DEFAULT_PERMISSIONS_LOCAL,
+      os: { consultar: true, editar: true, excluir: false }
+    },
+    ultimo_acesso: "Hoje, 07:15"
+  }
+];
+
+// Initial local storage items for Veiculos and TiposAtendimento
+const INITIAL_VEICULOS: Veiculo[] = [];
+
+const INITIAL_TIPOS_ATENDIMENTO: TipoAtendimento[] = [
+  { id: 1, nome: "ASSISTÊNCIA TÉCNICA", descricao: "Atendimento corretivo padrão em campo", ativo: true },
+  { id: 2, nome: "GARANTIA", descricao: "Reparo sem custo sob cobertura de fábrica", ativo: true },
+  { id: 3, nome: "REVISÃO PREVENTIVA", descricao: "Manutenção periódica preventiva programada", ativo: true },
+  { id: 4, nome: "ENTREGA TÉCNICA", descricao: "Primeira montagem e instrução técnica ao cliente", ativo: true },
+  { id: 5, nome: "MONTAGEM", descricao: "Montagem estrutural do implemento agrícola", ativo: true },
+  { id: 6, nome: "TREINAMENTO", descricao: "Treinamento operacional para operadores do cliente", ativo: true },
+  { id: 7, nome: "OUTRO", descricao: "Atendimentos diversos não categorizados", ativo: true }
+];
 
 // Initial local storage items for Planos and Revisões
 const INITIAL_PLANOS: PlanoManutencao[] = [
@@ -155,7 +229,7 @@ export const API = {
         let relationError = false;
 
         // Try to fetch with relation join first
-        const { data, error } = await supabase
+        let query = supabase
           .from("implementos")
           .select(`
             *,
@@ -165,8 +239,16 @@ export const API = {
               cidade,
               uf
             )
-          `)
-          .order("modelo");
+          `);
+        
+        // Use a safer ordering
+        try {
+          query = query.order("id", { ascending: false });
+        } catch (e) {
+          console.warn("Could not order by id, continuing...");
+        }
+
+        const { data, error } = await query;
 
         if (error) {
           if (error.code === "PGRST200" || error.message?.includes("relationship") || error.message?.includes("foreign key")) {
@@ -183,7 +265,7 @@ export const API = {
           const { data: impls, error: implsErr } = await supabase
             .from("implementos")
             .select("*")
-            .order("modelo");
+            .order("id", { ascending: false });
           if (implsErr) throw implsErr;
 
           // Fetch all clients to map in-memory
@@ -686,37 +768,79 @@ export const API = {
   ordensServico: {
     async listar(): Promise<OrdemServico[]> {
       try {
-        const { data, error } = await supabase
+        let { data, error } = await supabase
           .from("ordens_servico")
           .select(`
             *,
-            clientes (
-              id,
-              razao_social,
-              cidade,
-              uf
-            ),
-            implementos (
-              id,
-              fabricante,
-              categoria,
-              modelo,
-              numero_serie
-            )
+            clientes (id, razao_social, cidade, uf),
+            implementos (id, fabricante, categoria, modelo, numero_serie)
           `)
           .order("id", { ascending: false });
+        
+        // Handle join failures (PGRST200)
+        if (error && error.code === "PGRST200") {
+          console.warn("Join failed in listar, fetching relations separately...");
+          const { data: baseData, error: baseError } = await supabase
+            .from("ordens_servico")
+            .select("*")
+            .order("id", { ascending: false });
+          
+          if (baseError) throw baseError;
+          
+          const [clients, implements_data] = await Promise.all([
+            API.clientes.listar(),
+            API.implementos.listar()
+          ]);
+
+          data = (baseData || []).map(o => ({
+            ...o,
+            clientes: clients.find(c => c.id === o.cliente_id),
+            implementos: implements_data.find(i => i.id === o.implemento_id)
+          }));
+          error = null;
+        }
+
         if (error) throw error;
-        return data || [];
+        
+        const fetchedData = (data || []).map(o => {
+          const os: any = {
+            ...o,
+            reclamacao: o.reclamacao || o.problema || o.problema_relatado || "",
+            servico_executado: o.servico_executado || o.servico || o.laudo || "",
+            observacao: o.observacao || o.obs || "",
+            horimetro_final: o.horimetro_final || o.horimetro || undefined,
+            km_rodado_total: o.km_rodado_total || o.km_rodado || 0,
+            numero_os: (o.numero_os === "EMPTY" || !o.numero_os || o.numero_os === "NOVA") ? null : o.numero_os
+          };
+          
+          if (!os.numero_os) {
+            os.numero_os = `OS-TMP-${os.id}`;
+          }
+          
+          return os as OrdemServico;
+        });
+
+        localStorage.setItem("gst_ordens_servico", JSON.stringify(fetchedData));
+        return fetchedData;
       } catch (err) {
-        console.warn("Falling back to simulated O.S. list...");
+        console.warn("Database fetch failed, falling back to local storage...", err);
         const saved = localStorage.getItem("gst_ordens_servico");
-        if (saved) return JSON.parse(saved);
+        if (saved) {
+          try {
+            return JSON.parse(saved);
+          } catch (e) {
+            console.error("Error parsing local ordens_servico list:", e);
+          }
+        }
         return [];
       }
     },
 
     async buscar(id: number): Promise<OrdemServico | null> {
       try {
+        let rawData: any = null;
+        let relationError = false;
+
         const { data, error } = await supabase
           .from("ordens_servico")
           .select(`
@@ -726,8 +850,64 @@ export const API = {
           `)
           .eq("id", id)
           .single();
-        if (error) throw error;
-        return data;
+          
+        if (error) {
+          if (error.code === "PGRST200" || error.message?.includes("relationship") || error.message?.includes("foreign key")) {
+            relationError = true;
+          } else {
+            throw error;
+          }
+        } else {
+          rawData = data;
+        }
+
+        if (relationError) {
+          const { data: os, error: osErr } = await supabase
+            .from("ordens_servico")
+            .select("*")
+            .eq("id", id)
+            .maybeSingle();
+          if (osErr) throw osErr;
+          if (!os) return null;
+
+          let clientData = undefined;
+          if (os.cliente_id) {
+            const { data: cli } = await supabase
+              .from("clientes")
+              .select("*")
+              .eq("id", os.cliente_id)
+              .maybeSingle();
+            if (cli) clientData = cli;
+          }
+
+          let impData = undefined;
+          if (os.implemento_id) {
+            const { data: imp } = await supabase
+              .from("implementos")
+              .select("*")
+              .eq("id", os.implemento_id)
+              .maybeSingle();
+            if (imp) impData = imp;
+          }
+
+          rawData = {
+            ...os,
+            clientes: clientData,
+            implementos: impData
+          };
+        }
+
+        if (!rawData) return null;
+        
+        // Map common DB field names to frontend names
+        return {
+          ...rawData,
+          reclamacao: rawData.reclamacao || rawData.problema || rawData.problema_relatado || "",
+          servico_executado: rawData.servico_executado || rawData.servico || rawData.laudo || "",
+          observacao: rawData.observacao || rawData.obs || "",
+          horimetro_final: rawData.horimetro_final || rawData.horimetro || undefined,
+          km_rodado_total: rawData.km_rodado_total || rawData.km_rodado || 0,
+        } as OrdemServico;
       } catch (err) {
         const list = await this.listar();
         return list.find(o => o.id === id) || null;
@@ -735,97 +915,225 @@ export const API = {
     },
 
     async inserir(os: OrdemServico): Promise<OrdemServico> {
-      try {
-        const { data, error } = await supabase
-          .from("ordens_servico")
-          .insert(os)
-          .select()
-          .single();
-        if (error) throw error;
-        return data;
-      } catch (err) {
+      // 1. Generate OS Number if missing or "EMPTY" or "NOVA" or "OS-TMP-"
+      if (!os.numero_os || os.numero_os.trim() === "" || os.numero_os === "EMPTY" || os.numero_os === "NOVA" || os.numero_os.startsWith("OS-TMP-")) {
         const list = await this.listar();
-        const nextId = list.reduce((max, o) => Math.max(max, o.id || 0), 0) + 1;
-        const numOs = "OS" + String(nextId).padStart(6, "0");
-        
-        // Fetch client and implement
-        const clients = await API.clientes.listar();
-        const foundClient = clients.find(c => c.id === Number(os.cliente_id));
-        const implementos = await API.implementos.listar();
-        const foundImplemento = implementos.find(i => i.id === Number(os.implemento_id));
-
-        const newOS: OrdemServico = {
-          ...os,
-          id: nextId,
-          numero_os: os.numero_os || numOs,
-          data_abertura: os.data_abertura || new Date().toISOString(),
-          clientes: foundClient ? {
-            id: foundClient.id!,
-            razao_social: foundClient.razao_social,
-            cidade: foundClient.cidade,
-            uf: foundClient.uf,
-            telefone: foundClient.telefone,
-            celular: foundClient.celular
-          } : undefined,
-          implementos: foundImplemento ? {
-            id: foundImplemento.id!,
-            fabricante: foundImplemento.fabricante,
-            categoria: foundImplemento.categoria,
-            modelo: foundImplemento.modelo,
-            numero_serie: foundImplemento.numero_serie,
-            ano: foundImplemento.ano,
-            data_entrega: foundImplemento.data_entrega,
-            ativo: foundImplemento.ativo
-          } : undefined
-        };
-        localStorage.setItem("gst_ordens_servico", JSON.stringify([...list, newOS]));
-        return newOS;
+        const lastNum = list.reduce((max, item) => {
+          const match = item.numero_os?.match(/OS(\d+)/);
+          return match ? Math.max(max, parseInt(match[1])) : max;
+        }, 0);
+        os.numero_os = "OS" + String(lastNum + 1).padStart(6, "0");
       }
+
+      // 2. Map and Filter columns for DB payload
+      const { clientes, implementos, id, ...cleanOS } = os;
+      
+      const validColumns = [
+        "numero_os", "status", "cliente_id", "implemento_id", "tecnico_id", "auxiliar_id",
+        "tipo_atendimento", "prioridade", "reclamacao", "observacao", "solicitante",
+        "data_abertura", "data_encerramento", "data_atendimento", "data_termino",
+        "hora_inicial", "hora_final", "servico_executado", "veiculo_usado",
+        "km_inicial", "km_final", "km_rodado_total", "horimetro_final",
+        "revisao_executada", "horas_trabalhadas_total", "valor_km_unitario",
+        "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
+        "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
+        // DB Field Mapping aliases
+        "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado"
+      ];
+      
+      let payload: any = {};
+      for (const col of validColumns) {
+        if (col in cleanOS && (cleanOS as any)[col] !== undefined) {
+          payload[col] = (cleanOS as any)[col];
+        }
+      }
+
+      // Defensive redundancy mapping
+      if (cleanOS.reclamacao && !payload.problema) payload.problema = cleanOS.reclamacao;
+      if (cleanOS.servico_executado) { payload.servico = cleanOS.servico_executado; 
+        payload.servico_executado = cleanOS.servico_executado;
+        
+      }
+      if (cleanOS.observacao && !payload.obs) payload.obs = cleanOS.observacao;
+      if (cleanOS.horimetro_final && !payload.horimetro) payload.horimetro = cleanOS.horimetro_final;
+      if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
+      
+      // Sanitize time fields: if empty string, set to null to avoid DB errors
+      if (payload.hora_inicial === "") payload.hora_inicial = null;
+      if (payload.hora_final === "") payload.hora_final = null;
+      
+      // General sanitization: convert all empty strings to null for DB consistency
+      // except for specifically required strings if any
+      for (const key in payload) {
+        if (payload[key] === "") {
+          payload[key] = null;
+        }
+      }
+      
+      // Default data_abertura if missing
+      if (!payload.data_abertura) payload.data_abertura = new Date().toISOString();
+
+      let attempt = 0;
+      while (attempt < 15) {
+        try {
+          const { data, error } = await supabase
+            .from("ordens_servico")
+            .insert(payload)
+            .select()
+            .single();
+            
+          if (error) {
+            // PostgreSQL code 42703 (undefined_column)
+            // PostgREST code PGRST204 (column not found in schema cache)
+            if (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("column") || error.message?.includes("does not exist")) {
+              // Handle both "column 'name'" and "'name' column" formats
+              const match = error.message.match(/column ['"](.*?)['"]/i) || error.message.match(/['"](.*?)['"] column/i);
+              const colName = match ? (match[1] || match[2]) : null;
+              if (colName && colName in payload) {
+                console.warn(`Column '${colName}' not in DB. Removing...`);
+                delete (payload as any)[colName];
+                attempt++;
+                continue;
+              }
+              
+              // Fallback for specific known missing columns if regex fails
+              const knownMissing = ["data_termino", "obs", "problema", "servico", "laudo", "horimetro", "km_rodado", "revisao_executada"];
+              let foundMissing = false;
+              for (const col of knownMissing) {
+                if (error.message.includes(`'${col}'`) || error.message.includes(`"${col}"`)) {
+                  console.warn(`Known missing column '${col}' detected. Removing.`);
+                  delete (payload as any)[col];
+                  foundMissing = true;
+                  break;
+                }
+              }
+              if (foundMissing) {
+                attempt++;
+                continue;
+              }
+            }
+            throw error;
+          }
+          
+          return await this.buscar(data.id) || data;
+        } catch (err) {
+          console.error("Insert failed details:", JSON.stringify(err, null, 2));
+          break;
+        }
+      }
+      
+      // Fallback
+      const list = await this.listar();
+      const nextId = Math.max(0, ...list.map(o => o.id || 0)) + 1;
+      const result = { ...os, id: nextId };
+      localStorage.setItem("gst_ordens_servico", JSON.stringify([result, ...list]));
+      return result;
     },
 
     async atualizar(id: number, os: OrdemServico): Promise<OrdemServico> {
-      try {
-        const { data, error } = await supabase
-          .from("ordens_servico")
-          .update(os)
-          .eq("id", id)
-          .select()
-          .single();
-        if (error) throw error;
-        return data;
-      } catch (err) {
+      if (!os.numero_os || os.numero_os.trim() === "" || os.numero_os === "EMPTY" || os.numero_os === "NOVA" || os.numero_os.startsWith("OS-TMP-")) {
         const list = await this.listar();
-        const clients = await API.clientes.listar();
-        const foundClient = clients.find(c => c.id === Number(os.cliente_id));
-        const implementos = await API.implementos.listar();
-        const foundImplemento = implementos.find(i => i.id === Number(os.implemento_id));
-
-        const updated = list.map(o => o.id === id ? {
-          ...o,
-          ...os,
-          id,
-          clientes: foundClient ? {
-            id: foundClient.id!,
-            razao_social: foundClient.razao_social,
-            cidade: foundClient.cidade,
-            uf: foundClient.uf,
-            telefone: foundClient.telefone,
-            celular: foundClient.celular
-          } : o.clientes,
-          implementos: foundImplemento ? {
-            id: foundImplemento.id!,
-            fabricante: foundImplemento.fabricante,
-            categoria: foundImplemento.categoria,
-            modelo: foundImplemento.modelo,
-            numero_serie: foundImplemento.numero_serie,
-            ano: foundImplemento.ano,
-            data_entrega: foundImplemento.data_entrega,
-            ativo: foundImplemento.ativo
-          } : o.implementos
-        } : o);
-        localStorage.setItem("gst_ordens_servico", JSON.stringify(updated));
-        return { ...os, id };
+        const lastNum = list.reduce((max, item) => {
+          const match = item.numero_os?.match(/OS(\d+)/);
+          return match ? Math.max(max, parseInt(match[1])) : max;
+        }, 0);
+        os.numero_os = "OS" + String(lastNum + 1).padStart(6, "0");
       }
+
+      const { clientes, implementos, id: _, ...cleanOS } = os;
+      const validColumns = [
+        "numero_os", "status", "cliente_id", "implemento_id", "tecnico_id", "auxiliar_id",
+        "tipo_atendimento", "prioridade", "reclamacao", "observacao", "solicitante",
+        "data_abertura", "data_encerramento", "data_atendimento", "data_termino",
+        "hora_inicial", "hora_final", "servico_executado", "veiculo_usado",
+        "km_inicial", "km_final", "km_rodado_total", "horimetro_final",
+        "revisao_executada", "horas_trabalhadas_total", "valor_km_unitario",
+        "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
+        "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
+        "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado", "servico_executado"
+      ];
+      
+      let payload: any = {};
+      for (const col of validColumns) {
+        if (col in cleanOS && (cleanOS as any)[col] !== undefined) {
+          payload[col] = (cleanOS as any)[col];
+        }
+      }
+      
+      if (cleanOS.reclamacao && !payload.problema) payload.problema = cleanOS.reclamacao;
+      if (cleanOS.servico_executado) { payload.servico = cleanOS.servico_executado; 
+        payload.servico_executado = cleanOS.servico_executado;
+        
+      }
+      if (cleanOS.observacao && !payload.obs) payload.obs = cleanOS.observacao;
+      if (cleanOS.horimetro_final && !payload.horimetro) payload.horimetro = cleanOS.horimetro_final;
+      if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
+      
+      // Sanitize time fields: if empty string, set to null to avoid DB errors
+      if (payload.hora_inicial === "") payload.hora_inicial = null;
+      if (payload.hora_final === "") payload.hora_final = null;
+
+      // General sanitization: convert all empty strings to null for DB consistency
+      for (const key in payload) {
+        if (payload[key] === "") {
+          payload[key] = null;
+        }
+      }
+      
+      let attempt = 0;
+      while (attempt < 15) {
+        try {
+          const { data, error } = await supabase
+            .from("ordens_servico")
+            .update(payload)
+            .eq("id", id)
+            .select()
+            .single();
+            
+          if (error) {
+            // PostgreSQL code 42703 (undefined_column)
+            // PostgREST code PGRST204 (column not found in schema cache)
+            if (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("column") || error.message?.includes("does not exist")) {
+              // Handle both "column 'name'" and "'name' column" formats
+              const match = error.message.match(/column ['"](.*?)['"]/i) || error.message.match(/['"](.*?)['"] column/i);
+              const colName = match ? (match[1] || match[2]) : null;
+              if (colName && colName in payload) {
+                console.warn(`Column '${colName}' not in DB. Removing...`);
+                delete (payload as any)[colName];
+                attempt++;
+                continue;
+              }
+              
+              // Fallback for specific known missing columns if regex fails
+              const knownMissing = ["data_termino", "obs", "problema", "servico", "laudo", "horimetro", "km_rodado", "revisao_executada"];
+              let foundMissing = false;
+              for (const col of knownMissing) {
+                if (error.message.includes(`'${col}'`) || error.message.includes(`"${col}"`)) {
+                  console.warn(`Known missing column '${col}' detected. Removing.`);
+                  delete (payload as any)[col];
+                  foundMissing = true;
+                  break;
+                }
+              }
+              if (foundMissing) {
+                attempt++;
+                continue;
+              }
+            }
+            throw error;
+          }
+          return await this.buscar(data.id) || data;
+        } catch (err) {
+          console.error("Update failed details:", JSON.stringify(err, null, 2));
+          break;
+        }
+      }
+      
+      // Sync local storage fallback
+      const list = await this.listar();
+      const updated = list.map(o => o.id === id ? { ...o, ...os } : o);
+      localStorage.setItem("gst_ordens_servico", JSON.stringify(updated));
+      return { ...os, id };
     },
 
     async excluir(id: number): Promise<boolean> {
@@ -835,13 +1143,13 @@ export const API = {
           .delete()
           .eq("id", id);
         if (error) throw error;
-        return true;
       } catch (err) {
-        const list = await this.listar();
-        const filtered = list.filter(o => o.id !== id);
-        localStorage.setItem("gst_ordens_servico", JSON.stringify(filtered));
-        return true;
+        console.warn("Could not delete from Supabase, removing from LocalStorage...");
       }
+      const list = await this.listar();
+      const filtered = list.filter(o => o.id !== id);
+      localStorage.setItem("gst_ordens_servico", JSON.stringify(filtered));
+      return true;
     },
 
     async finalizar(id: number): Promise<OrdemServico> {
@@ -916,6 +1224,7 @@ export const API = {
   apontamentos: {
     async listar(osId: number): Promise<Apontamento[]> {
       try {
+        console.log("Listing appointments for OS:", osId);
         const { data, error } = await supabase
           .from("os_apontamentos")
           .select(`
@@ -926,16 +1235,54 @@ export const API = {
               apelido
             )
           `)
-          .eq("os_id", osId)
-          .order("data_servico")
-          .order("hora_inicial");
+          .eq("os_id", osId);
+          
         if (error) throw error;
-        return data || [];
+        
+        const dbItems = (data || []).map(item => ({
+          id: item.id,
+          os_id: item.os_id,
+          tecnico_id: item.tecnico_id,
+          data_servico: item.data,
+          hora_inicial: item.hora_inicio,
+          hora_final: item.hora_fim,
+          descricao_servico: item.descricao || item.servico || item.servico_executado || "",
+          horas_trabalhadas: item.horas_trabalhadas || 0,
+          km_rodado: item.km_rodado || 0,
+          tecnicos: item.tecnicos
+        }));
+
+        // Merge with localStorage for resilience
+        const saved = localStorage.getItem("gst_apontamentos");
+        let localItems: Apontamento[] = [];
+        if (saved) {
+          try {
+            const list: Apontamento[] = JSON.parse(saved);
+            localItems = list.filter(a => 
+              Number(a.os_id) === Number(osId) && 
+              !dbItems.find(db => String(db.id) === String(a.id))
+            );
+          } catch (e) {
+            console.error("Local storage parse error:", e);
+          }
+        }
+
+        const allItems = [...dbItems, ...localItems];
+        // Sort by date and time
+        return allItems.sort((a, b) => {
+          const dateA = a.data_servico || "";
+          const dateB = b.data_servico || "";
+          if (dateA !== dateB) return dateA.localeCompare(dateB);
+          return (a.hora_inicial || "").localeCompare(b.hora_inicial || "");
+        });
       } catch (err) {
+        console.error("Error listing pointing:", err);
         const saved = localStorage.getItem("gst_apontamentos");
         if (saved) {
-          const list: Apontamento[] = JSON.parse(saved);
-          return list.filter(a => a.os_id === osId);
+          try {
+            const list: Apontamento[] = JSON.parse(saved);
+            return list.filter(a => Number(a.os_id) === Number(osId));
+          } catch (e) {}
         }
         return [];
       }
@@ -945,11 +1292,30 @@ export const API = {
       try {
         const { data, error } = await supabase
           .from("os_apontamentos")
-          .select("*")
+          .select(`
+            *,
+            tecnicos (
+              id,
+              nome,
+              apelido
+            )
+          `)
           .eq("id", id)
           .single();
         if (error) throw error;
-        return data;
+        
+        return {
+          id: data.id,
+          os_id: data.os_id,
+          tecnico_id: data.tecnico_id,
+          data_servico: data.data,
+          hora_inicial: data.hora_inicio,
+          hora_final: data.hora_fim,
+          descricao_servico: data.descricao || data.servico || "",
+          horas_trabalhadas: data.horas_trabalhadas || 0,
+          km_rodado: data.km_rodado || 0,
+          tecnicos: data.tecnicos
+        };
       } catch (err) {
         const saved = localStorage.getItem("gst_apontamentos");
         if (saved) {
@@ -962,19 +1328,72 @@ export const API = {
 
     async inserir(apontamento: Apontamento): Promise<Apontamento> {
       try {
-        const { data, error } = await supabase
-          .from("os_apontamentos")
-          .insert(apontamento)
-          .select()
-          .single();
-        if (error) throw error;
-        return data;
+        // Map frontend fields to DB columns
+        const payload: any = {
+          os_id: apontamento.os_id,
+          tecnico_id: apontamento.tecnico_id,
+          data: apontamento.data_servico,
+          hora_inicio: apontamento.hora_inicial,
+          hora_fim: apontamento.hora_final,
+          descricao: apontamento.descricao_servico,
+          servico: apontamento.descricao_servico,
+          horas_trabalhadas: apontamento.horas_trabalhadas,
+          km_rodado: apontamento.km_rodado
+        };
+
+        // Sanitize
+        for (const key in payload) {
+          if (payload[key] === "") payload[key] = null;
+        }
+
+        let attempt = 0;
+        while (attempt < 15) {
+          const { data, error } = await supabase
+            .from("os_apontamentos")
+            .insert(payload)
+            .select(`
+              *,
+              tecnicos (id, nome, apelido)
+            `)
+            .single();
+          
+          if (error) {
+            if (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("column") || error.message?.includes("does not exist")) {
+              const match = error.message.match(/column ['"](.*?)['"]/i) || error.message.match(/['"](.*?)['"] column/i);
+              const colName = match ? (match[1] || match[2]) : null;
+              if (colName && colName in payload) {
+                console.warn(`Column '${colName}' not in DB. Removing...`);
+                delete payload[colName];
+                attempt++;
+                continue;
+              }
+            }
+            throw error;
+          }
+
+          return {
+            id: data.id,
+            os_id: data.os_id,
+            tecnico_id: data.tecnico_id,
+            data_servico: data.data,
+            hora_inicial: data.hora_inicio,
+            hora_final: data.hora_fim,
+            descricao_servico: data.descricao || data.servico || "",
+            horas_trabalhadas: data.horas_trabalhadas || 0,
+            km_rodado: data.km_rodado || 0,
+            tecnicos: data.tecnicos
+          };
+        }
+        throw new Error("Failed after too many retries");
       } catch (err) {
+        console.error("Error inserting appointment, falling back to local storage:", err);
         const saved = localStorage.getItem("gst_apontamentos");
         const list: Apontamento[] = saved ? JSON.parse(saved) : [];
-        const nextId = list.reduce((max, a) => Math.max(max, a.id || 0), 0) + 1;
         const tecnicos = await API.tecnicos.listar();
         const foundTecnico = tecnicos.find(t => t.id === Number(apontamento.tecnico_id));
+        
+        // Use a more robust random ID for local storage to prevent collisions
+        const nextId = Date.now() + Math.floor(Math.random() * 100000);
         
         const newApontamento: Apontamento = {
           ...apontamento,
@@ -992,14 +1411,63 @@ export const API = {
 
     async atualizar(id: number, apontamento: Apontamento): Promise<Apontamento> {
       try {
-        const { data, error } = await supabase
-          .from("os_apontamentos")
-          .update(apontamento)
-          .eq("id", id)
-          .select()
-          .single();
-        if (error) throw error;
-        return data;
+        const payload: any = {
+          os_id: apontamento.os_id,
+          tecnico_id: apontamento.tecnico_id,
+          data: apontamento.data_servico,
+          hora_inicio: apontamento.hora_inicial,
+          hora_fim: apontamento.hora_final,
+          servico: apontamento.descricao_servico,
+          descricao: apontamento.descricao_servico,
+          horas_trabalhadas: apontamento.horas_trabalhadas,
+          km_rodado: apontamento.km_rodado
+        };
+
+        // Sanitize
+        for (const key in payload) {
+          if (payload[key] === "") payload[key] = null;
+        }
+
+        let attempt = 0;
+        while (attempt < 15) {
+          const { data, error } = await supabase
+            .from("os_apontamentos")
+            .update(payload)
+            .eq("id", id)
+            .select(`
+              *,
+              tecnicos (id, nome, apelido)
+            `)
+            .single();
+          
+          if (error) {
+            if (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("column") || error.message?.includes("does not exist")) {
+              const match = error.message.match(/column ['"](.*?)['"]/i) || error.message.match(/['"](.*?)['"] column/i);
+              const colName = match ? (match[1] || match[2]) : null;
+              if (colName && colName in payload) {
+                console.warn(`Column '${colName}' not in DB. Removing...`);
+                delete payload[colName];
+                attempt++;
+                continue;
+              }
+            }
+            throw error;
+          }
+
+          return {
+            id: data.id,
+            os_id: data.os_id,
+            tecnico_id: data.tecnico_id,
+            data_servico: data.data,
+            hora_inicial: data.hora_inicio,
+            hora_final: data.hora_fim,
+            descricao_servico: data.servico || data.descricao || "",
+            horas_trabalhadas: data.horas_trabalhadas || 0,
+            km_rodado: data.km_rodado || 0,
+            tecnicos: data.tecnicos
+          };
+        }
+        throw new Error("Failed after too many retries");
       } catch (err) {
         const saved = localStorage.getItem("gst_apontamentos");
         const list: Apontamento[] = saved ? JSON.parse(saved) : [];
@@ -1021,20 +1489,34 @@ export const API = {
       }
     },
 
-    async excluir(id: number): Promise<boolean> {
+    async excluir(id: number | string): Promise<boolean> {
       try {
-        const { error } = await supabase
-          .from("os_apontamentos")
-          .delete()
-          .eq("id", id);
-        if (error) throw error;
+        const idStr = String(id);
+        
+        // 1. Remove from localStorage immediately
+        const saved = localStorage.getItem("gst_apontamentos");
+        if (saved) {
+          try {
+            const list: Apontamento[] = JSON.parse(saved);
+            const filtered = list.filter(a => String(a.id) !== idStr);
+            if (filtered.length !== list.length) {
+              localStorage.setItem("gst_apontamentos", JSON.stringify(filtered));
+            }
+          } catch (e) {
+            console.error("Local storage sync error:", e);
+          }
+        }
+
+        // 2. Try Supabase deletion
+        const numericId = Number(id);
+        if (!isNaN(numericId)) {
+          await supabase.from("os_apontamentos").delete().eq("id", numericId);
+        }
+        
         return true;
       } catch (err) {
-        const saved = localStorage.getItem("gst_apontamentos");
-        const list: Apontamento[] = saved ? JSON.parse(saved) : [];
-        const filtered = list.filter(a => a.id !== id);
-        localStorage.setItem("gst_apontamentos", JSON.stringify(filtered));
-        return true;
+        console.error("Excluir error:", err);
+        return true; // We return true because local removal was attempted
       }
     },
 
@@ -1131,6 +1613,446 @@ export const API = {
         localStorage.setItem("gst_revisoes", JSON.stringify(filtered));
         return true;
       }
+    }
+  },
+
+  veiculos: {
+    async listar(): Promise<Veiculo[]> {
+      const saved = localStorage.getItem("gst_veiculos");
+      if (saved) {
+        // Try to update local storage in the background if Supabase is available
+        try {
+          const { data, error } = await supabase
+            .from("veiculos")
+            .select("*")
+            .order("placa");
+          if (!error && data) {
+            localStorage.setItem("gst_veiculos", JSON.stringify(data));
+            return data;
+          }
+        } catch (e) {
+          console.warn("Supabase fetch error, using local data:", e);
+        }
+        
+        let list: Veiculo[] = JSON.parse(saved);
+        // Automatically filter out leftover simulated vehicles from the user's browser storage
+        const simulatedPlates = ["HIL-4X12", "LZZ-2002", "FIO-0303", "SAV-0404", "PROPRIO"];
+        const filtered = list.filter(v => !simulatedPlates.includes(v.placa));
+        if (filtered.length !== list.length) {
+          localStorage.setItem("gst_veiculos", JSON.stringify(filtered));
+          list = filtered;
+        }
+        return list;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("veiculos")
+          .select("*")
+          .order("placa");
+        if (error) throw error;
+        
+        localStorage.setItem("gst_veiculos", JSON.stringify(data || []));
+        return data || [];
+      } catch (err) {
+        console.warn("Falling back to local veiculos...");
+        localStorage.setItem("gst_veiculos", JSON.stringify(INITIAL_VEICULOS));
+        return INITIAL_VEICULOS;
+      }
+    },
+
+    async buscar(id: number): Promise<Veiculo | null> {
+      const list = await this.listar();
+      return list.find(v => v.id === id) || null;
+    },
+
+    async inserir(veiculo: Veiculo): Promise<Veiculo> {
+      const list = await this.listar();
+      const newId = list.reduce((max, v) => Math.max(max, v.id || 0), 0) + 1;
+      const newVeiculo = { ...veiculo, id: newId };
+      const updatedList = [...list, newVeiculo];
+      localStorage.setItem("gst_veiculos", JSON.stringify(updatedList));
+
+      // Attempt Supabase insert in background
+      try {
+        await supabase
+          .from("veiculos")
+          .insert(newVeiculo);
+      } catch (err) {
+        console.warn("Could not sync insert to Supabase, saved locally:", err);
+      }
+      return newVeiculo;
+    },
+
+    async atualizar(id: number, veiculo: Veiculo): Promise<Veiculo> {
+      const list = await this.listar();
+      const updatedList = list.map(v => v.id === id ? { ...veiculo, id } : v);
+      localStorage.setItem("gst_veiculos", JSON.stringify(updatedList));
+
+      // Attempt Supabase update in background
+      try {
+        await supabase
+          .from("veiculos")
+          .update(veiculo)
+          .eq("id", id);
+      } catch (err) {
+        console.warn("Could not sync update to Supabase, saved locally:", err);
+      }
+      return { ...veiculo, id };
+    },
+
+    async excluir(id: number): Promise<boolean> {
+      const list = await this.listar();
+      const filtered = list.filter(v => v.id !== id);
+      localStorage.setItem("gst_veiculos", JSON.stringify(filtered));
+
+      // Attempt Supabase delete in background
+      try {
+        await supabase
+          .from("veiculos")
+          .delete()
+          .eq("id", id);
+      } catch (err) {
+        console.warn("Could not sync delete to Supabase, deleted locally:", err);
+      }
+      return true;
+    }
+  },
+
+  tiposAtendimento: {
+    async listar(): Promise<TipoAtendimento[]> {
+      const saved = localStorage.getItem("gst_tipos_atendimento");
+      if (saved) {
+        // Try to update local storage in the background if Supabase is available
+        try {
+          const { data, error } = await supabase
+            .from("tipos_atendimento")
+            .select("*")
+            .order("nome");
+          if (!error && data) {
+            localStorage.setItem("gst_tipos_atendimento", JSON.stringify(data));
+          }
+        } catch (e) {
+          console.warn("Supabase fetch error, using local data:", e);
+        }
+        return JSON.parse(saved);
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("tipos_atendimento")
+          .select("*")
+          .order("nome");
+        if (error) throw error;
+        
+        localStorage.setItem("gst_tipos_atendimento", JSON.stringify(data || []));
+        return data || [];
+      } catch (err) {
+        console.warn("Falling back to local tipos_atendimento...");
+        localStorage.setItem("gst_tipos_atendimento", JSON.stringify(INITIAL_TIPOS_ATENDIMENTO));
+        return INITIAL_TIPOS_ATENDIMENTO;
+      }
+    },
+
+    async buscar(id: number): Promise<TipoAtendimento | null> {
+      const list = await this.listar();
+      return list.find(t => t.id === id) || null;
+    },
+
+    async inserir(tipo: TipoAtendimento): Promise<TipoAtendimento> {
+      const list = await this.listar();
+      const newId = list.reduce((max, t) => Math.max(max, t.id || 0), 0) + 1;
+      const newTipo = { ...tipo, id: newId };
+      const updatedList = [...list, newTipo];
+      localStorage.setItem("gst_tipos_atendimento", JSON.stringify(updatedList));
+
+      // Attempt Supabase insert in background
+      try {
+        await supabase
+          .from("tipos_atendimento")
+          .insert(newTipo);
+      } catch (err) {
+        console.warn("Could not sync insert to Supabase, saved locally:", err);
+      }
+      return newTipo;
+    },
+
+    async atualizar(id: number, tipo: TipoAtendimento): Promise<TipoAtendimento> {
+      const list = await this.listar();
+      const updatedList = list.map(t => t.id === id ? { ...tipo, id } : t);
+      localStorage.setItem("gst_tipos_atendimento", JSON.stringify(updatedList));
+
+      // Attempt Supabase update in background
+      try {
+        await supabase
+          .from("tipos_atendimento")
+          .update(tipo)
+          .eq("id", id);
+      } catch (err) {
+        console.warn("Could not sync update to Supabase, saved locally:", err);
+      }
+      return { ...tipo, id };
+    },
+
+    async excluir(id: number): Promise<boolean> {
+      const list = await this.listar();
+      const filtered = list.filter(t => t.id !== id);
+      localStorage.setItem("gst_tipos_atendimento", JSON.stringify(filtered));
+
+      // Attempt Supabase delete in background
+      try {
+        await supabase
+          .from("tipos_atendimento")
+          .delete()
+          .eq("id", id);
+      } catch (err) {
+        console.warn("Could not sync delete to Supabase, deleted locally:", err);
+      }
+      return true;
+    }
+  },
+
+  usuarios: {
+    async listar(): Promise<Usuario[]> {
+      const mapDbUserToUsuario = (u: any): Usuario => {
+        let permissoes: any = null;
+        if (u.permissoes) {
+          try {
+            permissoes = typeof u.permissoes === "string" ? JSON.parse(u.permissoes) : u.permissoes;
+          } catch (e) {
+            console.warn("Error parsing user permissoes JSON", e);
+          }
+        }
+        
+        if (!permissoes) {
+          // Fallback / Construct from flat columns to satisfy relational non-list schema
+          permissoes = {
+            dashboard: {
+              consultar: u.perm_dashboard_consultar ?? true,
+              editar: u.perm_dashboard_editar ?? false,
+              excluir: u.perm_dashboard_excluir ?? false,
+            },
+            clientes: {
+              consultar: u.perm_clientes_consultar ?? true,
+              editar: u.perm_clientes_editar ?? true,
+              excluir: u.perm_clientes_excluir ?? false,
+            },
+            implementos: {
+              consultar: u.perm_implementos_consultar ?? true,
+              editar: u.perm_implementos_editar ?? true,
+              excluir: u.perm_implementos_excluir ?? false,
+            },
+            os: {
+              consultar: u.perm_os_consultar ?? true,
+              editar: u.perm_os_editar ?? true,
+              excluir: u.perm_os_excluir ?? false,
+            },
+            agenda: {
+              consultar: u.perm_agenda_consultar ?? true,
+              editar: u.perm_agenda_editar ?? true,
+              excluir: u.perm_agenda_excluir ?? false,
+            },
+            financeiro: {
+              consultar: u.perm_financeiro_consultar ?? true,
+              editar: u.perm_financeiro_editar ?? false,
+              excluir: u.perm_financeiro_excluir ?? false,
+            },
+            configuracoes: {
+              consultar: u.perm_configuracoes_consultar ?? false,
+              editar: u.perm_configuracoes_editar ?? false,
+              excluir: u.perm_configuracoes_excluir ?? false,
+            }
+          };
+        }
+
+        return {
+          id: u.id,
+          nome: u.nome,
+          usuario: u.usuario,
+          email: u.email,
+          perfil: u.perfil,
+          ativo: u.ativo ?? true,
+          ultimo_acesso: u.ultimo_acesso,
+          foto: u.foto,
+          senha: u.senha,
+          permissoes
+        };
+      };
+
+      const saved = localStorage.getItem("gst_usuarios_v1");
+      if (saved) {
+        // Run migration for admin password locally if stored as 'admin'
+        try {
+          let parsed = JSON.parse(saved);
+          let migrated = false;
+          parsed = parsed.map((u: any) => {
+            if (u.usuario === "admin" && (u.senha === "admin" || !u.senha)) {
+              u.senha = "142536";
+              migrated = true;
+            }
+            return u;
+          });
+          if (migrated) {
+            localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsed));
+          }
+        } catch (e) {
+          console.error("Error migrating saved local user passwords:", e);
+        }
+
+        // Try to update local storage in the background if Supabase is available
+        try {
+          const { data, error } = await supabase
+            .from("usuarios")
+            .select("*")
+            .order("nome");
+          if (!error && data) {
+            const parsedData = data.map(mapDbUserToUsuario);
+            localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsedData));
+            return parsedData;
+          }
+        } catch (e) {
+          console.warn("Supabase fetch error, using local data:", e);
+        }
+        return JSON.parse(localStorage.getItem("gst_usuarios_v1") || "[]");
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("usuarios")
+          .select("*")
+          .order("nome");
+        if (error) throw error;
+        
+        const parsedData = (data || []).map(mapDbUserToUsuario);
+        localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsedData));
+        return parsedData;
+      } catch (err) {
+        console.warn("Falling back to local usuarios...");
+        localStorage.setItem("gst_usuarios_v1", JSON.stringify(INITIAL_USUARIOS));
+        return INITIAL_USUARIOS;
+      }
+    },
+
+    async buscar(id: string): Promise<Usuario | null> {
+      const list = await this.listar();
+      return list.find(u => u.id === id) || null;
+    },
+
+    async inserir(usuario: Usuario): Promise<Usuario> {
+      const list = await this.listar();
+      const updatedList = [...list, usuario];
+      localStorage.setItem("gst_usuarios_v1", JSON.stringify(updatedList));
+
+      // Attempt Supabase insert in background
+      try {
+        const p = usuario.permissoes || DEFAULT_PERMISSIONS_LOCAL;
+        const preparedUser = {
+          id: usuario.id,
+          nome: usuario.nome,
+          usuario: usuario.usuario,
+          email: usuario.email,
+          perfil: usuario.perfil,
+          ativo: usuario.ativo,
+          ultimo_acesso: usuario.ultimo_acesso,
+          foto: usuario.foto,
+          senha: usuario.senha,
+          permissoes: JSON.stringify(p),
+          perm_dashboard_consultar: p.dashboard?.consultar ?? false,
+          perm_dashboard_editar: p.dashboard?.editar ?? false,
+          perm_dashboard_excluir: p.dashboard?.excluir ?? false,
+          perm_clientes_consultar: p.clientes?.consultar ?? false,
+          perm_clientes_editar: p.clientes?.editar ?? false,
+          perm_clientes_excluir: p.clientes?.excluir ?? false,
+          perm_implementos_consultar: p.implementos?.consultar ?? false,
+          perm_implementos_editar: p.implementos?.editar ?? false,
+          perm_implementos_excluir: p.implementos?.excluir ?? false,
+          perm_os_consultar: p.os?.consultar ?? false,
+          perm_os_editar: p.os?.editar ?? false,
+          perm_os_excluir: p.os?.excluir ?? false,
+          perm_agenda_consultar: p.agenda?.consultar ?? false,
+          perm_agenda_editar: p.agenda?.editar ?? false,
+          perm_agenda_excluir: p.agenda?.excluir ?? false,
+          perm_financeiro_consultar: p.financeiro?.consultar ?? false,
+          perm_financeiro_editar: p.financeiro?.editar ?? false,
+          perm_financeiro_excluir: p.financeiro?.excluir ?? false,
+          perm_configuracoes_consultar: p.configuracoes?.consultar ?? false,
+          perm_configuracoes_editar: p.configuracoes?.editar ?? false,
+          perm_configuracoes_excluir: p.configuracoes?.excluir ?? false,
+        };
+        await supabase
+          .from("usuarios")
+          .insert(preparedUser);
+      } catch (err) {
+        console.warn("Could not sync insert to Supabase, saved locally:", err);
+      }
+      return usuario;
+    },
+
+    async atualizar(id: string, usuario: Usuario): Promise<Usuario> {
+      const list = await this.listar();
+      const updatedList = list.map(u => u.id === id ? { ...usuario, id } : u);
+      localStorage.setItem("gst_usuarios_v1", JSON.stringify(updatedList));
+
+      // Attempt Supabase update in background
+      try {
+        const p = usuario.permissoes || DEFAULT_PERMISSIONS_LOCAL;
+        const preparedUser = {
+          nome: usuario.nome,
+          usuario: usuario.usuario,
+          email: usuario.email,
+          perfil: usuario.perfil,
+          ativo: usuario.ativo,
+          ultimo_acesso: usuario.ultimo_acesso,
+          foto: usuario.foto,
+          senha: usuario.senha,
+          permissoes: JSON.stringify(p),
+          perm_dashboard_consultar: p.dashboard?.consultar ?? false,
+          perm_dashboard_editar: p.dashboard?.editar ?? false,
+          perm_dashboard_excluir: p.dashboard?.excluir ?? false,
+          perm_clientes_consultar: p.clientes?.consultar ?? false,
+          perm_clientes_editar: p.clientes?.editar ?? false,
+          perm_clientes_excluir: p.clientes?.excluir ?? false,
+          perm_implementos_consultar: p.implementos?.consultar ?? false,
+          perm_implementos_editar: p.implementos?.editar ?? false,
+          perm_implementos_excluir: p.implementos?.excluir ?? false,
+          perm_os_consultar: p.os?.consultar ?? false,
+          perm_os_editar: p.os?.editar ?? false,
+          perm_os_excluir: p.os?.excluir ?? false,
+          perm_agenda_consultar: p.agenda?.consultar ?? false,
+          perm_agenda_editar: p.agenda?.editar ?? false,
+          perm_agenda_excluir: p.agenda?.excluir ?? false,
+          perm_financeiro_consultar: p.financeiro?.consultar ?? false,
+          perm_financeiro_editar: p.financeiro?.editar ?? false,
+          perm_financeiro_excluir: p.financeiro?.excluir ?? false,
+          perm_configuracoes_consultar: p.configuracoes?.consultar ?? false,
+          perm_configuracoes_editar: p.configuracoes?.editar ?? false,
+          perm_configuracoes_excluir: p.configuracoes?.excluir ?? false,
+        };
+        await supabase
+          .from("usuarios")
+          .update(preparedUser)
+          .eq("id", id);
+      } catch (err) {
+        console.warn("Could not sync update to Supabase, saved locally:", err);
+      }
+      return { ...usuario, id };
+    },
+
+    async excluir(id: string): Promise<boolean> {
+      const list = await this.listar();
+      const filtered = list.filter(u => u.id !== id);
+      localStorage.setItem("gst_usuarios_v1", JSON.stringify(filtered));
+
+      // Attempt Supabase delete in background
+      try {
+        await supabase
+          .from("usuarios")
+          .delete()
+          .eq("id", id);
+      } catch (err) {
+        console.warn("Could not sync delete to Supabase, deleted locally:", err);
+      }
+      return true;
     }
   }
 };

@@ -28,7 +28,9 @@ import {
   ClipboardList,
   DollarSign,
   Activity,
-  MoreHorizontal
+  MoreHorizontal,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Cliente, Implemento, OrdemServico } from "../types";
@@ -58,6 +60,10 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPage] = useState(20);
+
+  // Sorting State
+  const [sortField, setSortField] = useState<string>("razao_social");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   // Form State
   const [codigoSankhya, setCodigoSankhya] = useState("");
@@ -208,94 +214,6 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
     }
   };
 
-  const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsLoading(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const bstr = event.target?.result;
-        const wb = XLSX.read(bstr, { type: "binary" });
-        const sheetName = wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        const json: any[] = XLSX.utils.sheet_to_json(ws);
-
-        if (json.length === 0) {
-          showToast("Nenhuma linha encontrada no arquivo.", "error");
-          setIsLoading(false);
-          return;
-        }
-
-        let inserted = 0;
-        let updated = 0;
-
-        for (const row of json) {
-          // Standard mappings mirroring importador.js
-          const codParceiro = row["Cód. Parceiro"] || row["Codigo"] || row["id"] || "";
-          const nameUfCidade = row["Nome + UF (Cidade)"] || row["Cidade"] || "";
-          let parsedCidade = "";
-          let parsedUf = "RO";
-
-          if (nameUfCidade) {
-            const parts = String(nameUfCidade).split("-");
-            parsedCidade = parts[0]?.trim() || "";
-            parsedUf = parts[1]?.trim() || "RO";
-          } else {
-            parsedCidade = row["Cidade"] || row["cidade"] || "";
-            parsedUf = row["UF"] || row["uf"] || "RO";
-          }
-
-          const mappedCliente: Cliente = {
-            codigo_sankhya: String(codParceiro).trim(),
-            tipo_pessoa: (row["Tipo de pessoa"] === "Jurídica" || row["Tipo"] === "J") ? "J" : "F",
-            ativo: String(row["Ativo"] || "SIM").toUpperCase() === "SIM",
-            razao_social: String(row["Razão social"] || row["Nome"] || row["Cliente"] || "").toUpperCase(),
-            nome_fantasia: row["Nome Parceiro"] || row["Fantasia"] || "",
-            cpf_cnpj: row["CNPJ / CPF"] || row["CNPJ"] || row["CPF"] || "",
-            inscricao_estadual: row["Insc. Estadual / Identidade"] || "",
-            endereco: row["Nome (Endereço)"] || row["Endereço"] || "",
-            numero: String(row["Número"] || row["Numero"] || ""),
-            complemento: row["Complemento"] || "",
-            bairro: row["Nome (Bairro)"] || row["Bairro"] || "",
-            cidade: parsedCidade.toUpperCase(),
-            uf: parsedUf.toUpperCase(),
-            cep: row["CEP"] || row["Cep"] || "",
-            telefone: row["Telefone"] || "",
-            celular: row["Celular/Fax"] || row["Celular"] || "",
-            email: row["Email"] || row["E-mail"] || ""
-          };
-
-          if (!mappedCliente.razao_social) continue;
-
-          // Check if cod exists
-          const existing = mappedCliente.codigo_sankhya 
-            ? await API.clientes.buscarCodigo(mappedCliente.codigo_sankhya)
-            : null;
-
-          if (existing && existing.id) {
-            await API.clientes.atualizar(existing.id, mappedCliente);
-            updated++;
-          } else {
-            await API.clientes.inserir(mappedCliente);
-            inserted++;
-          }
-        }
-
-        showToast(`Importação concluída! Novos: ${inserted} | Atualizados: ${updated}`, "success");
-        await onRefresh();
-      } catch (err) {
-        console.error(err);
-        showToast("Erro ao processar planilha.", "error");
-      } finally {
-        setIsLoading(false);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
-
   // Filter clients based on search query
   const filteredClientes = clientes.filter(c => {
     const q = searchTerm.toLowerCase();
@@ -308,11 +226,47 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
     );
   });
 
+  // Sort clients based on sort state
+  const sortedClientes = [...filteredClientes].sort((a, b) => {
+    let valA: any = a[sortField as keyof Cliente];
+    let valB: any = b[sortField as keyof Cliente];
+
+    if (sortField === "codigo_sankhya") {
+      valA = a.codigo_sankhya || "";
+      valB = b.codigo_sankhya || "";
+    } else if (sortField === "cidade") {
+      valA = `${a.cidade || ""} - ${a.uf || ""}`;
+      valB = `${b.cidade || ""} - ${b.uf || ""}`;
+    }
+
+    if (valA === undefined || valA === null) valA = "";
+    if (valB === undefined || valB === null) valB = "";
+
+    if (typeof valA === "string" && typeof valB === "string") {
+      return sortDirection === "asc"
+        ? valA.localeCompare(valB, "pt-BR", { numeric: true })
+        : valB.localeCompare(valA, "pt-BR", { numeric: true });
+    }
+
+    if (valA < valB) return sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const toggleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
   // Pagination calculation
-  const totalPages = Math.ceil(filteredClientes.length / itemsPerPage) || 1;
+  const totalPages = Math.ceil(sortedClientes.length / itemsPerPage) || 1;
   const pageIndex = Math.min(currentPage, totalPages);
   const startIdx = (pageIndex - 1) * itemsPerPage;
-  const paginatedClientes = filteredClientes.slice(startIdx, startIdx + itemsPerPage);
+  const paginatedClientes = sortedClientes.slice(startIdx, startIdx + itemsPerPage);
 
   return (
     <div className="space-y-6">
@@ -340,27 +294,11 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
             Clientes
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Cadastro, importação e listagem unificada de clientes e parceiros de serviço.
+            Cadastro, gestão e listagem unificada de clientes e parceiros de serviço.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* File Input for XLSX */}
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleExcelImport}
-            accept=".xlsx,.xls,.csv"
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="btn bg-gray-800 text-white hover:bg-gray-900 border-none shadow-sm flex items-center gap-1.5"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Importar
-          </button>
-          
           <button
             onClick={() => openForm(null)}
             className="btn bg-brand-red text-white hover:bg-brand-red-dark border-none shadow-sm flex items-center gap-1.5"
@@ -413,17 +351,77 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                  <th className="p-4 w-16 text-center">Código</th>
-                  <th className="p-4">Razão Social</th>
+                <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                  <th 
+                    className="p-4 w-16 text-center cursor-pointer hover:bg-gray-100/80 transition-colors"
+                    onClick={() => toggleSort("codigo_sankhya")}
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      Código
+                      {sortField === "codigo_sankhya" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors"
+                    onClick={() => toggleSort("razao_social")}
+                  >
+                    <div className="flex items-center gap-1">
+                      Razão Social
+                      {sortField === "razao_social" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
                   {!selectedCliente && (
                     <>
-                      <th className="p-4">Cidade / UF</th>
-                      <th className="p-4">CNPJ / CPF</th>
-                      <th className="p-4">Contato</th>
+                      <th 
+                        className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors"
+                        onClick={() => toggleSort("cidade")}
+                      >
+                        <div className="flex items-center gap-1">
+                          Cidade / UF
+                          {sortField === "cidade" && (
+                            sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors"
+                        onClick={() => toggleSort("cpf_cnpj")}
+                      >
+                        <div className="flex items-center gap-1">
+                          CNPJ / CPF
+                          {sortField === "cpf_cnpj" && (
+                            sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors"
+                        onClick={() => toggleSort("celular")}
+                      >
+                        <div className="flex items-center gap-1">
+                          Contato
+                          {sortField === "celular" && (
+                            sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                          )}
+                        </div>
+                      </th>
                     </>
                   )}
-                  <th className="p-4 text-center">Status</th>
+                  <th 
+                    className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors"
+                    onClick={() => toggleSort("ativo")}
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      Status
+                      {sortField === "ativo" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
                   <th className="p-4 text-right w-24">Ações</th>
                 </tr>
               </thead>

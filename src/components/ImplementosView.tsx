@@ -28,7 +28,9 @@ import {
   Wrench,
   Clock,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
 import { Implemento, Cliente, OrdemServico, PlanoManutencao } from "../types";
 import { API } from "../lib/api";
@@ -86,6 +88,10 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
+
+  // Sorting State
+  const [sortField, setSortField] = useState<string>("modelo");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const showToast = (text: string, type: "success" | "error" | "info" = "success") => {
     setToastMessage({ text, type });
@@ -239,10 +245,45 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
     );
   });
 
-  const totalPages = Math.ceil(filteredImplementos.length / itemsPerPage) || 1;
+  const sortedImplementos = [...filteredImplementos].sort((a, b) => {
+    let valA: any = a[sortField as keyof Implemento];
+    let valB: any = b[sortField as keyof Implemento];
+
+    if (sortField === "cliente") {
+      valA = a.clientes?.razao_social || "";
+      valB = b.clientes?.razao_social || "";
+    } else if (sortField === "modelo") {
+      valA = `${a.fabricante || ""} ${a.modelo || ""}`;
+      valB = `${b.fabricante || ""} ${b.modelo || ""}`;
+    }
+
+    if (valA === undefined || valA === null) valA = "";
+    if (valB === undefined || valB === null) valB = "";
+
+    if (typeof valA === "string" && typeof valB === "string") {
+      return sortDirection === "asc"
+        ? valA.localeCompare(valB, "pt-BR", { numeric: true })
+        : valB.localeCompare(valA, "pt-BR", { numeric: true });
+    }
+
+    if (valA < valB) return sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const toggleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const totalPages = Math.ceil(sortedImplementos.length / itemsPerPage) || 1;
   const pageIndex = Math.min(currentPage, totalPages);
   const startIdx = (pageIndex - 1) * itemsPerPage;
-  const paginatedImplementos = filteredImplementos.slice(startIdx, startIdx + itemsPerPage);
+  const paginatedImplementos = sortedImplementos.slice(startIdx, startIdx + itemsPerPage);
 
   const selectedClientInfo = getSelectedClientInfo();
 
@@ -322,13 +363,55 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                    <th className="p-4">ID</th>
-                    <th className="p-4">Cliente Proprietário</th>
-                    <th className="p-4">Fabricante / Modelo</th>
-                    <th className="p-4">Nº de Série</th>
-                    <th className="p-4">Categoria</th>
-                    <th className="p-4 text-center">Status</th>
+                  <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("id")}>
+                      <div className="flex items-center gap-1">
+                        ID
+                        {sortField === "id" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("cliente")}>
+                      <div className="flex items-center gap-1">
+                        Cliente Proprietário
+                        {sortField === "cliente" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("modelo")}>
+                      <div className="flex items-center gap-1">
+                        Fabricante / Modelo
+                        {sortField === "modelo" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("numero_serie")}>
+                      <div className="flex items-center gap-1">
+                        Nº de Série
+                        {sortField === "numero_serie" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("categoria")}>
+                      <div className="flex items-center gap-1">
+                        Categoria
+                        {sortField === "categoria" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
+                    <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("ativo")}>
+                      <div className="flex items-center justify-center gap-1">
+                        Status
+                        {sortField === "ativo" && (
+                          sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                        )}
+                      </div>
+                    </th>
                     <th className="p-4 text-right w-28">Ações</th>
                   </tr>
                 </thead>
