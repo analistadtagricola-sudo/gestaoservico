@@ -129,8 +129,6 @@ export function AppContent() {
     return () => window.removeEventListener("theme_updated", applyTheme);
   }, []);
 
-  // Notifications State
-  const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -304,14 +302,6 @@ export function AppContent() {
     ).map(o => ({ type: "O.S.", id: o.id, title: o.numero_os, sub: `${o.clientes?.razao_social} • ${o.implementos?.modelo || "Equipamento"}`, action: () => { handleNavigateWithTarget("os", o.id); setSearchModalOpen(false); } }))
   ].slice(0, 8);
 
-  // Dynamic alerts
-  const openOSCount = ordens.filter(o => o.status === "ABERTA").length;
-  const inProgressOSCount = ordens.filter(o => o.status === "EM ATENDIMENTO").length;
-  const recentAlerts = [
-    { id: 1, title: `${openOSCount} Ordens de serviço abertas`, desc: "Necessitam de agendamento de técnico.", type: "warning" },
-    { id: 2, title: `${inProgressOSCount} Técnicos em atendimento`, desc: "Acompanhe o andamento no mapa.", type: "info" },
-    { id: 3, title: "Revisão Preventiva de 250h", desc: "Trator Kuhn GF 10002 próximo do vencimento.", type: "alert" }
-  ];
 
   if (!currentUser) return <LoginView onLogin={setCurrentUser} />;
   return (
@@ -535,58 +525,6 @@ export function AppContent() {
               <span className="hidden sm:inline">Sincronizar</span>
             </button>
 
-            {/* Notifications Dropdown Toggle */}
-            <div className="relative">
-              <button
-                onClick={() => setNotifDropdownOpen(!notifDropdownOpen)}
-                className="p-2 text-gray-400 hover:text-white hover:bg-[#181b21] rounded-lg border border-[#242933] transition-all relative"
-              >
-                <Bell className="w-4 h-4" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-brand-red rounded-full ring-2 ring-[#111317]" />
-              </button>
-
-              <AnimatePresence>
-                {notifDropdownOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setNotifDropdownOpen(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 10 }}
-                      className="absolute right-0 mt-2 w-80 bg-white rounded-xl border border-gray-200 shadow-2xl z-50 overflow-hidden"
-                    >
-                      <div className="bg-[#111317] p-3 text-white flex justify-between items-center">
-                        <span className="text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
-                          <Bell className="w-3.5 h-3.5 text-brand-red" /> Central de Alertas
-                        </span>
-                        <span className="text-[9px] bg-[#1f242d] text-gray-400 px-1.5 py-0.5 rounded font-bold font-mono">3 Ativos</span>
-                      </div>
-                      <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                        {recentAlerts.map(alert => (
-                          <div key={alert.id} className="p-3.5 hover:bg-rose-50/10 transition-colors text-xs">
-                            <div className="flex items-start gap-2">
-                              <span className="w-1.5 h-1.5 bg-brand-red rounded-full mt-1.5 shrink-0" />
-                              <div>
-                                <h4 className="font-bold text-gray-800">{alert.title}</h4>
-                                <p className="text-[10px] text-gray-500 mt-1">{alert.desc}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="p-2.5 bg-gray-50 border-t border-gray-100 text-center">
-                        <button 
-                          onClick={() => { setNotifDropdownOpen(false); handleNavigateWithTarget("relatorios"); }}
-                          className="text-[10px] font-bold text-brand-red hover:underline uppercase tracking-wide"
-                        >
-                          Análise Completa de O.S.
-                        </button>
-                      </div>
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
-            </div>
 
             {/* Administrator Profile Card */}
             <div className="flex items-center gap-3 pl-4 border-l border-[#1c1f26]">
@@ -728,7 +666,7 @@ export function AppContent() {
                   {activeTab.view === "empresa" && <EmpresaView />}
                   {activeTab.view === "layout" && <LayoutView />}
                   {activeTab.view === "config_agenda" && <ConfigAgendaView />}
-                  {activeTab.view === "comissoes_config" && <ComissoesConfigView />}
+                  {activeTab.view === "comissoes_config" && <ComissoesConfigView onNavigate={handleNavigateWithTarget} />}
                   {activeTab.view === "integracoes" && <IntegracoesView onRefresh={fetchAllData} />}
                   {activeTab.view === "backup" && <BackupView />}
                   {activeTab.view === "logs" && <LogsView />}

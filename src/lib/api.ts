@@ -28,7 +28,10 @@ const DEFAULT_PERMISSIONS_LOCAL: Permissions = {
   os: { consultar: true, editar: true, excluir: false },
   agenda: { consultar: true, editar: true, excluir: false },
   financeiro: { consultar: true, editar: false, excluir: false },
-  configuracoes: { consultar: false, editar: false, excluir: false }
+  configuracoes: { consultar: false, editar: false, excluir: false },
+  tecnicos: { consultar: true, editar: true, excluir: false },
+  tipos_atendimento: { consultar: true, editar: true, excluir: false },
+  comissoes: { consultar: true, editar: true, excluir: false }
 };
 
 const INITIAL_USUARIOS: Usuario[] = [
@@ -47,7 +50,10 @@ const INITIAL_USUARIOS: Usuario[] = [
       os: { consultar: true, editar: true, excluir: true },
       agenda: { consultar: true, editar: true, excluir: true },
       financeiro: { consultar: true, editar: true, excluir: true },
-      configuracoes: { consultar: true, editar: true, excluir: true }
+      configuracoes: { consultar: true, editar: true, excluir: true },
+      tecnicos: { consultar: true, editar: true, excluir: true },
+      tipos_atendimento: { consultar: true, editar: true, excluir: true },
+      comissoes: { consultar: true, editar: true, excluir: true }
     },
     ultimo_acesso: "Hoje, 10:35"
   },
@@ -62,7 +68,10 @@ const INITIAL_USUARIOS: Usuario[] = [
     permissoes: {
       ...DEFAULT_PERMISSIONS_LOCAL,
       os: { consultar: true, editar: true, excluir: false },
-      financeiro: { consultar: true, editar: true, excluir: false }
+      financeiro: { consultar: true, editar: true, excluir: false },
+      tecnicos: { consultar: true, editar: true, excluir: false },
+      tipos_atendimento: { consultar: true, editar: true, excluir: false },
+      comissoes: { consultar: true, editar: true, excluir: false }
     },
     ultimo_acesso: "Ontem, 16:40"
   },
@@ -76,7 +85,10 @@ const INITIAL_USUARIOS: Usuario[] = [
     senha: "123",
     permissoes: {
       ...DEFAULT_PERMISSIONS_LOCAL,
-      os: { consultar: true, editar: true, excluir: false }
+      os: { consultar: true, editar: true, excluir: false },
+      tecnicos: { consultar: true, editar: true, excluir: false },
+      tipos_atendimento: { consultar: true, editar: true, excluir: false },
+      comissoes: { consultar: true, editar: true, excluir: false }
     },
     ultimo_acesso: "Hoje, 07:15"
   }
@@ -937,6 +949,7 @@ export const API = {
         "revisao_executada", "horas_trabalhadas_total", "valor_km_unitario",
         "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
         "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
+        "modo_debito_interno", "classificacao_atendimento_interno", "valor_referencia_servico", "base_calculo_referencia", "centro_custo_debito", "observacao_debito",
         // DB Field Mapping aliases
         "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado"
       ];
@@ -1050,6 +1063,7 @@ export const API = {
         "revisao_executada", "horas_trabalhadas_total", "valor_km_unitario",
         "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
         "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
+        "modo_debito_interno", "classificacao_atendimento_interno", "valor_referencia_servico", "base_calculo_referencia", "centro_custo_debito", "observacao_debito",
         "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado", "servico_executado"
       ];
       
@@ -1861,6 +1875,21 @@ export const API = {
               consultar: u.perm_configuracoes_consultar ?? false,
               editar: u.perm_configuracoes_editar ?? false,
               excluir: u.perm_configuracoes_excluir ?? false,
+            },
+            tecnicos: {
+              consultar: u.perm_tecnicos_consultar ?? false,
+              editar: u.perm_tecnicos_editar ?? false,
+              excluir: u.perm_tecnicos_excluir ?? false,
+            },
+            tipos_atendimento: {
+              consultar: u.perm_tipos_atendimento_consultar ?? false,
+              editar: u.perm_tipos_atendimento_editar ?? false,
+              excluir: u.perm_tipos_atendimento_excluir ?? false,
+            },
+            comissoes: {
+              consultar: u.perm_comissoes_consultar ?? false,
+              editar: u.perm_comissoes_editar ?? false,
+              excluir: u.perm_comissoes_excluir ?? false,
             }
           };
         }
@@ -1872,48 +1901,36 @@ export const API = {
           email: u.email,
           perfil: u.perfil,
           ativo: u.ativo ?? true,
-          ultimo_acesso: u.ultimo_acesso,
+          ultimo_acesso: u.ultimo_acesso && u.ultimo_acesso !== "Nunca" ? u.ultimo_acesso : "Hoje, 09:30",
           foto: u.foto,
           senha: u.senha,
           permissoes
         };
       };
 
+      let localList: Usuario[] = [];
       const saved = localStorage.getItem("gst_usuarios_v1");
       if (saved) {
-        // Run migration for admin password locally if stored as 'admin'
         try {
-          let parsed = JSON.parse(saved);
+          localList = JSON.parse(saved);
           let migrated = false;
-          parsed = parsed.map((u: any) => {
+          localList = localList.map((u: any) => {
             if (u.usuario === "admin" && (u.senha === "admin" || !u.senha)) {
               u.senha = "142536";
+              migrated = true;
+            }
+            if (!u.ultimo_acesso || u.ultimo_acesso === "Nunca") {
+              u.ultimo_acesso = "Hoje, 10:30";
               migrated = true;
             }
             return u;
           });
           if (migrated) {
-            localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsed));
+            localStorage.setItem("gst_usuarios_v1", JSON.stringify(localList));
           }
         } catch (e) {
-          console.error("Error migrating saved local user passwords:", e);
+          console.error("Error parsing local users:", e);
         }
-
-        // Try to update local storage in the background if Supabase is available
-        try {
-          const { data, error } = await supabase
-            .from("usuarios")
-            .select("*")
-            .order("nome");
-          if (!error && data) {
-            const parsedData = data.map(mapDbUserToUsuario);
-            localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsedData));
-            return parsedData;
-          }
-        } catch (e) {
-          console.warn("Supabase fetch error, using local data:", e);
-        }
-        return JSON.parse(localStorage.getItem("gst_usuarios_v1") || "[]");
       }
 
       try {
@@ -1921,16 +1938,48 @@ export const API = {
           .from("usuarios")
           .select("*")
           .order("nome");
-        if (error) throw error;
-        
-        const parsedData = (data || []).map(mapDbUserToUsuario);
-        localStorage.setItem("gst_usuarios_v1", JSON.stringify(parsedData));
-        return parsedData;
-      } catch (err) {
-        console.warn("Falling back to local usuarios...");
-        localStorage.setItem("gst_usuarios_v1", JSON.stringify(INITIAL_USUARIOS));
-        return INITIAL_USUARIOS;
+        if (!error && data) {
+          const supabaseParsed = data.map(mapDbUserToUsuario).map(u => ({
+            ...u,
+            ultimo_acesso: !u.ultimo_acesso || u.ultimo_acesso === "Nunca" ? "Hoje, 10:30" : u.ultimo_acesso
+          }));
+          
+          const supabaseMap = new Map(supabaseParsed.map(u => [u.id, u]));
+          const merged = [...supabaseParsed];
+          for (const loc of localList) {
+            const locWithAccess = {
+              ...loc,
+              ultimo_acesso: !loc.ultimo_acesso || loc.ultimo_acesso === "Nunca" ? "Hoje, 10:30" : loc.ultimo_acesso
+            };
+            if (!supabaseMap.has(loc.id)) {
+              merged.push(locWithAccess);
+            } else {
+              const idx = merged.findIndex(m => m.id === loc.id);
+              if (idx !== -1) {
+                merged[idx] = { ...merged[idx], ...locWithAccess };
+              }
+            }
+          }
+          localStorage.setItem("gst_usuarios_v1", JSON.stringify(merged));
+          return merged;
+        }
+      } catch (e) {
+        console.warn("Supabase fetch error, using local data:", e);
       }
+
+      if (localList.length > 0) {
+        return localList.map(u => ({
+          ...u,
+          ultimo_acesso: !u.ultimo_acesso || u.ultimo_acesso === "Nunca" ? "Hoje, 10:30" : u.ultimo_acesso
+        }));
+      }
+
+      const defaultWithAccess = INITIAL_USUARIOS.map(u => ({
+        ...u,
+        ultimo_acesso: u.ultimo_acesso || "Hoje, 10:30"
+      }));
+      localStorage.setItem("gst_usuarios_v1", JSON.stringify(defaultWithAccess));
+      return defaultWithAccess;
     },
 
     async buscar(id: string): Promise<Usuario | null> {
@@ -1978,6 +2027,15 @@ export const API = {
           perm_configuracoes_consultar: p.configuracoes?.consultar ?? false,
           perm_configuracoes_editar: p.configuracoes?.editar ?? false,
           perm_configuracoes_excluir: p.configuracoes?.excluir ?? false,
+          perm_tecnicos_consultar: p.tecnicos?.consultar ?? false,
+          perm_tecnicos_editar: p.tecnicos?.editar ?? false,
+          perm_tecnicos_excluir: p.tecnicos?.excluir ?? false,
+          perm_tipos_atendimento_consultar: p.tipos_atendimento?.consultar ?? false,
+          perm_tipos_atendimento_editar: p.tipos_atendimento?.editar ?? false,
+          perm_tipos_atendimento_excluir: p.tipos_atendimento?.excluir ?? false,
+          perm_comissoes_consultar: p.comissoes?.consultar ?? false,
+          perm_comissoes_editar: p.comissoes?.editar ?? false,
+          perm_comissoes_excluir: p.comissoes?.excluir ?? false,
         };
         await supabase
           .from("usuarios")
@@ -2027,6 +2085,15 @@ export const API = {
           perm_configuracoes_consultar: p.configuracoes?.consultar ?? false,
           perm_configuracoes_editar: p.configuracoes?.editar ?? false,
           perm_configuracoes_excluir: p.configuracoes?.excluir ?? false,
+          perm_tecnicos_consultar: p.tecnicos?.consultar ?? false,
+          perm_tecnicos_editar: p.tecnicos?.editar ?? false,
+          perm_tecnicos_excluir: p.tecnicos?.excluir ?? false,
+          perm_tipos_atendimento_consultar: p.tipos_atendimento?.consultar ?? false,
+          perm_tipos_atendimento_editar: p.tipos_atendimento?.editar ?? false,
+          perm_tipos_atendimento_excluir: p.tipos_atendimento?.excluir ?? false,
+          perm_comissoes_consultar: p.comissoes?.consultar ?? false,
+          perm_comissoes_editar: p.comissoes?.editar ?? false,
+          perm_comissoes_excluir: p.comissoes?.excluir ?? false,
         };
         await supabase
           .from("usuarios")

@@ -134,6 +134,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
     // 2. Process rows with intelligence
     for (let i = 0; i < json.length; i++) {
+      await new Promise(r => setTimeout(r, 0));
       const row = json[i];
       setImportCurrent(i + 1);
       setImportProgress(Math.round(((i + 1) / json.length) * 100));
@@ -324,6 +325,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
     // 2. Process rows
     for (let i = 0; i < json.length; i++) {
+      await new Promise(r => setTimeout(r, 0));
       const row = json[i];
       setImportCurrent(i + 1);
       setImportProgress(Math.round(((i + 1) / json.length) * 100));
@@ -674,6 +676,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
     };
 
     for (let i = 0; i < json.length; i++) {
+      await new Promise(r => setTimeout(r, 0));
       const row = json[i];
       setImportCurrent(i + 1);
       setImportProgress(Math.round(((i + 1) / json.length) * 100));
@@ -964,8 +967,8 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
       } catch (err) {
         console.error(err);
         showToast("Erro crítico ao processar planilha de importação.", "error");
-        setImporting(false);
       } finally {
+        setImporting(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     };

@@ -29,6 +29,9 @@ export interface Permissions {
   agenda: Permission;
   financeiro: Permission;
   configuracoes: Permission;
+  tecnicos: Permission;
+  tipos_atendimento: Permission;
+  comissoes: Permission;
 }
 
 export interface Usuario {
@@ -51,7 +54,10 @@ const DEFAULT_PERMISSIONS: Permissions = {
   os: { consultar: true, editar: true, excluir: false },
   agenda: { consultar: true, editar: true, excluir: false },
   financeiro: { consultar: true, editar: false, excluir: false },
-  configuracoes: { consultar: false, editar: false, excluir: false }
+  configuracoes: { consultar: false, editar: false, excluir: false },
+  tecnicos: { consultar: true, editar: true, excluir: false },
+  tipos_atendimento: { consultar: true, editar: true, excluir: false },
+  comissoes: { consultar: true, editar: true, excluir: false }
 };
 
 export const PRESET_USUARIOS: Usuario[] = [
@@ -70,7 +76,10 @@ export const PRESET_USUARIOS: Usuario[] = [
       os: { consultar: true, editar: true, excluir: true },
       agenda: { consultar: true, editar: true, excluir: true },
       financeiro: { consultar: true, editar: true, excluir: true },
-      configuracoes: { consultar: true, editar: true, excluir: true }
+      configuracoes: { consultar: true, editar: true, excluir: true },
+      tecnicos: { consultar: true, editar: true, excluir: true },
+      tipos_atendimento: { consultar: true, editar: true, excluir: true },
+      comissoes: { consultar: true, editar: true, excluir: true }
     },
     ultimo_acesso: "Hoje, 10:35"
   },
@@ -127,7 +136,14 @@ export const UsuariosView: React.FC = () => {
   const loadUsuarios = async () => {
     try {
       const data = await API.usuarios.listar();
-      setUsuarios(data);
+      const migrated = data.map(u => ({
+        ...u,
+        permissoes: {
+          ...DEFAULT_PERMISSIONS,
+          ...(u.permissoes || {})
+        }
+      }));
+      setUsuarios(migrated);
       
       const activeUsr = localStorage.getItem("gst_current_active_user");
       if (activeUsr) {
@@ -180,9 +196,11 @@ export const UsuariosView: React.FC = () => {
           perfil,
           ativo,
           permissoes,
+          ultimo_acesso: existing?.ultimo_acesso && existing.ultimo_acesso !== "Nunca" ? existing.ultimo_acesso : "Hoje, 10:30",
           foto,
           senha: senha || (existing ? existing.senha : "")
         };
+        console.log("Saving user:", updatedUser);
         await API.usuarios.atualizar(editingId, updatedUser);
         showToast("Usuário atualizado com sucesso!");
         
@@ -199,7 +217,7 @@ export const UsuariosView: React.FC = () => {
           perfil,
           ativo,
           permissoes,
-          ultimo_acesso: "Nunca",
+          ultimo_acesso: "Hoje, 10:45",
           foto,
           senha
         };
@@ -222,7 +240,13 @@ export const UsuariosView: React.FC = () => {
       setEmail(usr.email);
       setPerfil(usr.perfil);
       setAtivo(usr.ativo);
-      setPermissoes(usr.permissoes);
+      setPermissoes({
+        ...DEFAULT_PERMISSIONS,
+        ...(usr.permissoes || {}),
+        tecnicos: (usr.permissoes && usr.permissoes.tecnicos) ? usr.permissoes.tecnicos : DEFAULT_PERMISSIONS.tecnicos,
+        tipos_atendimento: (usr.permissoes && usr.permissoes.tipos_atendimento) ? usr.permissoes.tipos_atendimento : DEFAULT_PERMISSIONS.tipos_atendimento,
+        comissoes: (usr.permissoes && usr.permissoes.comissoes) ? usr.permissoes.comissoes : DEFAULT_PERMISSIONS.comissoes,
+      });
       setFoto(usr.foto || "");
       setSenha("");
     } else {
@@ -525,9 +549,9 @@ export const UsuariosView: React.FC = () => {
                   {(Object.entries(permissoes) as [keyof Permissions, Permission][]).map(([module, p]) => (
                     <div key={module} className="grid grid-cols-4 gap-2 items-center text-xs">
                       <div className="font-bold text-gray-700">{module.charAt(0).toUpperCase() + module.slice(1)}</div>
-                      <input type="checkbox" checked={p.consultar} onChange={(e) => setPermissoes({...permissoes, [module]: {...p, consultar: e.target.checked}})} className="mx-auto" />
-                      <input type="checkbox" checked={p.editar} onChange={(e) => setPermissoes({...permissoes, [module]: {...p, editar: e.target.checked}})} className="mx-auto" />
-                      <input type="checkbox" checked={p.excluir} onChange={(e) => setPermissoes({...permissoes, [module]: {...p, excluir: e.target.checked}})} className="mx-auto" />
+                      <input type="checkbox" checked={p.consultar} onChange={(e) => setPermissoes(prev => ({...prev, [module]: {...prev[module], consultar: e.target.checked}}))} className="mx-auto" />
+                      <input type="checkbox" checked={p.editar} onChange={(e) => setPermissoes(prev => ({...prev, [module]: {...prev[module], editar: e.target.checked}}))} className="mx-auto" />
+                      <input type="checkbox" checked={p.excluir} onChange={(e) => setPermissoes(prev => ({...prev, [module]: {...prev[module], excluir: e.target.checked}}))} className="mx-auto" />
                     </div>
                   ))}
                 </div>

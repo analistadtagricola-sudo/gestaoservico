@@ -244,12 +244,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <p className="font-display text-3xl font-extrabold mt-2 text-gray-800">{osAgendadas}</p>
           </div>
-          {/* Aguardando Peças */}
+          {/* Aguardando Finalização */}
           <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs relative overflow-hidden group hover:border-purple-300 transition-colors">
             <div className="absolute top-0 left-0 right-0 h-1 bg-purple-600" />
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Aguardando Peças</p>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Aguardando Finalização</p>
             </div>
             <p className="font-display text-3xl font-extrabold mt-2 text-gray-800">{osAguardando}</p>
           </div>
@@ -352,16 +352,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <div className="space-y-2.5">
               <button 
-                onClick={() => onNavigate("clientes")}
+                onClick={() => onNavigate("os", 0)}
                 className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-150 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
               >
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-sky-50 text-sky-600 rounded-lg group-hover:bg-sky-100">
-                    <Users className="w-4 h-4 shrink-0" />
+                  <div className="p-2 bg-rose-50 text-rose-600 rounded-lg group-hover:bg-rose-100">
+                    <Plus className="w-4 h-4 shrink-0" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-extrabold text-gray-700">Importar Clientes</h4>
-                    <p className="text-[10px] text-gray-400 font-semibold">Leitura de relatórios do Excel (Sankhya)</p>
+                    <h4 className="text-xs font-extrabold text-gray-700">Nova Ordem de Serviço</h4>
+                    <p className="text-[10px] text-gray-400 font-semibold">Abertura rápida de novo atendimento técnico</p>
                   </div>
                 </div>
                 <ArrowUpRight className="w-4 h-4 text-gray-300 group-hover:text-brand-red group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />

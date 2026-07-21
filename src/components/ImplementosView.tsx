@@ -216,6 +216,9 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
     // Sum costs from finalized related O.S.
     const finalized = relatedOS.filter(o => o.status === "FINALIZADA");
     
+    // Last horimetro
+    const lastHorimetro = finalized.reduce((max, o) => Math.max(max, Number(o.horimetro_final) || 0), 0);
+
     const labor = finalized.reduce((sum, o) => sum + (Number(o.valor_mao_obra) || 0), 0);
     const travel = finalized.reduce((sum, o) => sum + (Number(o.valor_deslocamento) || 0), 0);
     const thirdParty = finalized.reduce((sum, o) => sum + (Number(o.valor_terceiros) || 0), 0);
@@ -225,6 +228,7 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
     return {
       relatedOS,
       finalized,
+      lastHorimetro,
       parts,
       labor,
       travel,
@@ -646,6 +650,15 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
                         <span className="text-gray-400 font-bold block">Data da Entrega:</span>
                         <span className="font-semibold text-gray-800 text-sm mt-0.5 block">
                           {selectedImplemento.data_entrega ? new Date(selectedImplemento.data_entrega).toLocaleDateString("pt-BR") : "Não Registrada"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400 font-bold block">Último Horímetro Registrado:</span>
+                        <span className="font-mono font-bold text-brand-red text-sm mt-0.5 block">
+                          {(() => {
+                            const metrics = getDynamicDetails(selectedImplemento.id!);
+                            return metrics.lastHorimetro > 0 ? `${metrics.lastHorimetro} h` : "—";
+                          })()}
                         </span>
                       </div>
                       <div className="col-span-2 mt-2 pt-2 border-t border-gray-100">

@@ -103,6 +103,19 @@ export interface OrdemServico {
   horimetro_final?: number;
   revisao_executada?: string;
 
+  // Custom commission overrides for variants of Entrega Técnica / custom values
+  comissao_custom_opcao?: "automatico" | "personalizado";
+  comissao_custom_valor_tecnico?: number;
+  comissao_custom_valor_auxiliar?: number;
+
+  // Internal debit database fields
+  modo_debito_interno?: boolean;
+  classificacao_atendimento_interno?: string;
+  valor_referencia_servico?: number;
+  base_calculo_referencia?: string;
+  centro_custo_debito?: string;
+  observacao_debito?: string;
+
   // Embedded relations from Supabase queries
   clientes?: {
     id: number;
@@ -174,6 +187,9 @@ export interface Permissions {
   agenda: Permission;
   financeiro: Permission;
   configuracoes: Permission;
+  tecnicos: Permission;
+  tipos_atendimento: Permission;
+  comissoes: Permission;
 }
 
 export interface Usuario {

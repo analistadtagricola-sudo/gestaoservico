@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   FileText,
   DollarSign,
+  Coins,
   TrendingUp,
   MapPin,
   CheckCircle2,
@@ -92,6 +93,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const [tipoAtendimento, setTipoAtendimento] = useState("ASSISTÊNCIA TÉCNICA");
   const [prioridade, setPrioridade] = useState<"NORMAL" | "ALTA" | "URGENTE">("NORMAL");
   const [status, setStatus] = useState<OrdemServico["status"]>("ABERTA");
+  const [isManualStatus, setIsManualStatus] = useState(false);
   const [reclamacao, setReclamacao] = useState("");
   const [observacao, setObservacao] = useState("");
   const [solicitante, setSolicitante] = useState("");
@@ -134,6 +136,19 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const [veiculoUsado, setVeiculoUsado] = useState("");
   const [veiculosList, setVeiculosList] = useState<Veiculo[]>([]);
   const [tiposAtendimentoList, setTiposAtendimentoList] = useState<TipoAtendimento[]>([]);
+  const [showInternalDebitMode, setShowInternalDebitMode] = useState(false);
+  const [centroCustoDebito, setCentroCustoDebito] = useState("");
+  const [observacaoDebito, setObservacaoDebito] = useState("");
+  const [centrosCustoOpcoes, setCentrosCustoOpcoes] = useState<string[]>([]);
+
+  // Custom commission overrides states
+  const [comissaoCustomOpcao, setComissaoCustomOpcao] = useState<"automatico" | "personalizado">("automatico");
+  const [comissaoCustomValorTecnico, setComissaoCustomValorTecnico] = useState<number>(0);
+  const [comissaoCustomValorAuxiliar, setComissaoCustomValorAuxiliar] = useState<number>(0);
+
+  // Searchable client dropdown states
+  const [clienteDropdownOpen, setClienteDropdownOpen] = useState(false);
+  const [clienteSearch, setClienteSearch] = useState("");
 
   useEffect(() => {
     const loadVeiculosAndTipos = async () => {
@@ -148,6 +163,80 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     };
     loadVeiculosAndTipos();
   }, [isFormOpen]);
+
+  // Helper for dynamic status calculation
+  const getDynamicStatus = (
+    currentStatus: OrdemServico["status"],
+    dataAtend: string,
+    horaIn: string,
+    apontsCount: number
+  ): OrdemServico["status"] => {
+    // 1. ABERTA -> AGENDADA when data_atendimento (Início do Atendimento) is defined
+    if (currentStatus === "ABERTA" && dataAtend) {
+      return "AGENDADA";
+    }
+
+    // 2. AGENDADA -> EM ATENDIMENTO when the day and hour has arrived or passed
+    if (currentStatus === "AGENDADA" && dataAtend) {
+      const now = new Date();
+      
+      const localYear = now.getFullYear();
+      const localMonth = String(now.getMonth() + 1).padStart(2, "0");
+      const localDay = String(now.getDate()).padStart(2, "0");
+      const localTodayStr = `${localYear}-${localMonth}-${localDay}`;
+      
+      if (localTodayStr > dataAtend) {
+        return "EM ATENDIMENTO";
+      } else if (localTodayStr === dataAtend) {
+        if (horaIn) {
+          const [h, m] = horaIn.split(":").map(Number);
+          const currentHour = now.getHours();
+          const currentMin = now.getMinutes();
+          if (currentHour > h || (currentHour === h && currentMin >= m)) {
+            return "EM ATENDIMENTO";
+          }
+        } else {
+          // If no time is specified, being the same day is enough
+          return "EM ATENDIMENTO";
+        }
+      }
+    }
+
+    // 3. EM ATENDIMENTO -> AGUARDANDO (represented visually as "AGUARDANDO FINALIZAÇÃO") when there is at least one appointment log
+    if (currentStatus === "EM ATENDIMENTO" && apontsCount > 0) {
+      return "AGUARDANDO";
+    }
+
+    // 4. EM ATENDIMENTO -> AGUARDANDO if 2 days have passed since the scheduled date
+    if (currentStatus === "EM ATENDIMENTO" && dataAtend) {
+      const parts = dataAtend.split("-").map(Number);
+      if (parts.length === 3) {
+        const scheduledDate = new Date(parts[0], parts[1] - 1, parts[2]);
+        const todayDate = new Date();
+        scheduledDate.setHours(0,0,0,0);
+        todayDate.setHours(0,0,0,0);
+        const diffDays = (todayDate.getTime() - scheduledDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays >= 2) {
+          return "AGUARDANDO";
+        }
+      }
+    }
+
+    return currentStatus;
+  };
+
+  // Dynamic status evaluation effect
+  useEffect(() => {
+    if (!isFormOpen || isManualStatus || status === "FINALIZADA" || status === "CANCELADA") {
+      return;
+    }
+
+    const newStatus = getDynamicStatus(status, dataAtendimento, horaInicial, apontamentos.length);
+    if (newStatus !== status) {
+      setStatus(newStatus);
+    }
+  }, [dataAtendimento, horaInicial, apontamentos.length, isManualStatus, isFormOpen, status]);
+
   const [outrosCustos, setOutrosCustos] = useState<number>(0);
   const [notaFiscal, setNotaFiscal] = useState("");
   const [numNotaFiscal, setNumNotaFiscal] = useState("");
@@ -212,6 +301,17 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     }, 4000);
   };
 
+  const getUltimoHorimetroApontado = (implId: number) => {
+    if (!implId) return "";
+    const related = ordens.filter(o => o.implemento_id === implId);
+    const otherOS = currentOS ? related.filter(o => o.id !== currentOS.id) : related;
+    const maxHorimetro = otherOS.reduce((max, o) => {
+      const val = Number(o.horimetro_final);
+      return !isNaN(val) && val > max ? val : max;
+    }, 0);
+    return maxHorimetro > 0 ? maxHorimetro : "";
+  };
+
   // Synchronize technician hourly and KM rates
   useEffect(() => {
     if (tecnicoId) {
@@ -228,51 +328,15 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     }
   }, [tecnicoId, tecnicos, currentOS]);
 
-  // Sync KM Inicial / KM Final to KM Rodado and Valor Deslocamento
+  // Sync KM Inicial / KM Final to KM Rodado
   useEffect(() => {
     if (kmFinal > 0 && kmFinal >= kmInicial) {
       const calculatedKM = kmFinal - kmInicial;
       setKmRodado(calculatedKM);
-      setValorDeslocamento(calculatedKM * valorKmUnitario);
-    } else if (kmRodado > 0) {
-      setValorDeslocamento(kmRodado * valorKmUnitario);
     }
-  }, [kmInicial, kmFinal, kmRodado, valorKmUnitario]);
+  }, [kmInicial, kmFinal]);
 
-  // Sync Hora Inicial / Hora Final to Valor Mão de Obra
-  useEffect(() => {
-    const calcularHorasDeTempos = (inicio: string, fim: string) => {
-      if (!inicio || !fim) return 0;
-      const [h1, m1] = inicio.split(":").map(Number);
-      const [h2, m2] = fim.split(":").map(Number);
-      if (isNaN(h1) || isNaN(m1) || isNaN(h2) || isNaN(m2)) return 0;
-      let min1 = h1 * 60 + m1;
-      let min2 = h2 * 60 + m2;
-      if (min2 < min1) min2 += 24 * 60; // handle overnight
-      return (min2 - min1) / 60;
-    };
-
-    const hours = calcularHorasDeTempos(horaInicial, horaFinal);
-    if (!maoObraManual) {
-      if (hours > 0) {
-        setValorMaoObra(hours * valorHoraUnitario);
-      } else {
-        const uniqueBlocks = new Set<string>();
-        let apontHours = 0;
-        apontamentos.forEach(a => {
-          const key = `${a.data_servico}_${a.hora_inicial}_${a.hora_final}`;
-          if (!uniqueBlocks.has(key)) {
-            uniqueBlocks.add(key);
-            apontHours += Number(a.horas_trabalhadas || 0);
-          }
-        });
-
-        if (apontHours > 0) {
-          setValorMaoObra(apontHours * valorHoraUnitario);
-        }
-      }
-    }
-  }, [horaInicial, horaFinal, apontamentos, valorHoraUnitario, maoObraManual]);
+  // Removed automatic sync of Mão de Obra to avoid overwriting manual inputs
 
   // Open form directly when preselected ID changes
   useEffect(() => {
@@ -289,6 +353,27 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       onClearPreSelectedOS?.();
     }
   }, [preSelectedOSId, ordens]);
+
+  // Load and listen to Cost Centers updates from Settings
+  useEffect(() => {
+    const loadCentros = () => {
+      const saved = localStorage.getItem("gst_centros_custo");
+      if (saved) {
+        try {
+          setCentrosCustoOpcoes(JSON.parse(saved));
+        } catch (e) {
+          setCentrosCustoOpcoes(["Oficina", "PDI / Entrega Técnica", "Pós-Vendas", "Comercial / Vendas", "Frota / Veículos", "Administrativo"]);
+        }
+      } else {
+        const defaultCentros = ["Oficina", "PDI / Entrega Técnica", "Pós-Vendas", "Comercial / Vendas", "Frota / Veículos", "Administrativo", "Garantia Fabricante"];
+        setCentrosCustoOpcoes(defaultCentros);
+        localStorage.setItem("gst_centros_custo", JSON.stringify(defaultCentros));
+      }
+    };
+    loadCentros();
+    window.addEventListener("centros_custo_updated", loadCentros);
+    return () => window.removeEventListener("centros_custo_updated", loadCentros);
+  }, []);
 
   // Load secondary O.S. details (Apontamentos, Peças, Despesas)
   const loadOSDetails = async (os: OrdemServico) => {
@@ -327,6 +412,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
   const openForm = (os: OrdemServico | null = null) => {
     setActiveTab("dados");
+    setIsManualStatus(false);
     if (os) {
       setCurrentOS(os);
       setClienteId(String(os.cliente_id));
@@ -362,8 +448,33 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setNotaFiscal(os.nota_fiscal || "");
       setNumNotaFiscal(os.num_nota_fiscal || "");
       setDataNotaFiscal(os.data_nota_fiscal ? os.data_nota_fiscal.substring(0, 10) : "");
-      setHorimetroFinal(os.horimetro_final || "");
+      setHorimetroFinal(os.horimetro_final || getUltimoHorimetroApontado(os.implemento_id) || "");
       setRevisaoExecutada(os.revisao_executada || "");
+
+      setComissaoCustomOpcao(os.comissao_custom_opcao || "automatico");
+      setComissaoCustomValorTecnico(os.comissao_custom_valor_tecnico || 0);
+      setComissaoCustomValorAuxiliar(os.comissao_custom_valor_auxiliar || 0);
+
+      let isInternal = os.modo_debito_interno || 
+                        (os.tipo_atendimento || "").toUpperCase().includes("DÉBITO INTERNO") || 
+                        (os.tipo_atendimento || "").toUpperCase().includes("GARANTIA") || 
+                        (os.tipo_atendimento || "").toUpperCase().includes("ENTREGA TÉCNICA") || 
+                        (os.tipo_atendimento || "").toUpperCase().includes("CORTESIA");
+
+      if (!isInternal) {
+        try {
+          const savedConfig = localStorage.getItem("gst_comissoes_config");
+          if (savedConfig) {
+            const parsed = JSON.parse(savedConfig);
+            if (parsed.regrasAtendimento && Array.isArray(parsed.regrasAtendimento)) {
+              isInternal = parsed.regrasAtendimento.some((r: any) => r.tipo.toLowerCase().trim() === (os.tipo_atendimento || "").toLowerCase().trim());
+            }
+          }
+        } catch (e) {}
+      }
+      setShowInternalDebitMode(false);
+      setCentroCustoDebito(os.centro_custo_debito || "");
+      setObservacaoDebito(os.observacao_debito || "");
 
       loadOSDetails(os);
     } else {
@@ -376,6 +487,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setReclamacao("");
       setObservacao("");
       setSolicitante("");
+      setShowInternalDebitMode(false);
+      setCentroCustoDebito("");
+      setObservacaoDebito("");
 
       // Atendimento
       setDataAtendimento("");
@@ -403,6 +517,10 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setDataNotaFiscal("");
       setHorimetroFinal("");
 
+      setComissaoCustomOpcao("automatico");
+      setComissaoCustomValorTecnico(0);
+      setComissaoCustomValorAuxiliar(0);
+      setShowInternalDebitMode(false);
       setApontamentos([]);
       setPecas([]);
     }
@@ -456,12 +574,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
   // Total O.S. budget sum
   const calcularValorTotalOS = () => {
-    const deslocamento = calcularCustoDeslocamento();
-    const custoMaoObra = calcularCustoMaoObra();
-    
-    // O faturamento total agora considera apenas M.O, KM e Outras Despesas.
-    // O valor das peças aparece no resumo visual mas não soma no faturamento final da O.S.
-    return deslocamento + custoMaoObra + Number(outrosCustos);
+    return Number(valorMaoObra || 0) + Number(valorDeslocamento || 0) + Number(outrosCustos || 0);
   };
 
   const handleSaveOS = async (e?: React.FormEvent) => {
@@ -473,8 +586,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
     setIsLoading(true);
 
-    const deslocamento = calcularCustoDeslocamento();
-    const custoMaoObra = calcularCustoMaoObra();
     const valTotal = calcularValorTotalOS();
 
     const payload: OrdemServico = {
@@ -504,15 +615,78 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       valor_km_unitario: valorKmUnitario,
       valor_hora_unitario: valorHoraUnitario,
       veiculo_usado: veiculoUsado,
-      valor_deslocamento: deslocamento,
-      valor_mao_obra: custoMaoObra,
-      valor_terceiros: Number(outrosCustos),
+      valor_deslocamento: Number(valorDeslocamento || 0),
+      valor_mao_obra: Number(valorMaoObra || 0),
+      valor_terceiros: Number(outrosCustos || 0),
       nota_fiscal: notaFiscal,
       num_nota_fiscal: numNotaFiscal,
       data_nota_fiscal: dataNotaFiscal || null,
       valor_total: valTotal,
-      horimetro_final: horimetroFinal ? Number(horimetroFinal) : undefined,
-      revisao_executada: revisaoExecutada
+      horas_trabalhadas_total: String(calcularTotalHorasTrabalhadas()),
+      horimetro_final: horimetroFinal !== "" ? Number(horimetroFinal) : undefined,
+      revisao_executada: revisaoExecutada,
+
+      // Custom commission overrides fields
+      comissao_custom_opcao: comissaoCustomOpcao,
+      comissao_custom_valor_tecnico: Number(comissaoCustomValorTecnico),
+      comissao_custom_valor_auxiliar: Number(comissaoCustomValorAuxiliar),
+
+      // Internal debit mode database fields
+      modo_debito_interno: showInternalDebitMode,
+      classificacao_atendimento_interno: showInternalDebitMode ? tipoAtendimento : null,
+      centro_custo_debito: centroCustoDebito || null,
+      observacao_debito: showInternalDebitMode ? observacaoDebito : null,
+      valor_referencia_servico: (() => {
+        if (!showInternalDebitMode) return 0;
+        let calcValue = 0;
+        try {
+          const savedConfig = localStorage.getItem("gst_comissoes_config");
+          if (savedConfig) {
+            const parsed = JSON.parse(savedConfig);
+            const matched = parsed.regrasAtendimento?.find((r: any) => r.tipo.toLowerCase().trim() === tipoAtendimento.toLowerCase().trim());
+            const rule = matched || parsed.regraPadrao;
+            if (rule) {
+              if (rule.baseCalculo === "fixo") {
+                calcValue = Number(rule.valorTecnico || 0) + (rule.relacaoAuxiliar === "desabilitado" ? 0 : Number(rule.valorAuxiliar || 0));
+              } else {
+                // For all other bases (horas_e_km_customizado, faturamento_total, or mao_de_obra_deslocamento) in internal debit,
+                // we calculate the reference value using the fixed, reduced rates configured in the rule or standard rule.
+                const hRate = Number(rule.valorHoraComissao ?? 50);
+                const kRate = Number(rule.valorKmComissao ?? 1.50);
+                calcValue = (parseFloat(String(calcularTotalHorasTrabalhadas())) * hRate) + (Number(kmRodado) * kRate);
+              }
+            } else {
+              // Fallback default reduced rates
+              calcValue = (parseFloat(String(calcularTotalHorasTrabalhadas())) * 50) + (Number(kmRodado) * 1.50);
+            }
+          } else {
+            // Fallback default reduced rates
+            calcValue = (parseFloat(String(calcularTotalHorasTrabalhadas())) * 50) + (Number(kmRodado) * 1.50);
+          }
+        } catch (e) {
+          // Fallback default reduced rates
+          calcValue = (parseFloat(String(calcularTotalHorasTrabalhadas())) * 50) + (Number(kmRodado) * 1.50);
+        }
+        return calcValue;
+      })(),
+      base_calculo_referencia: (() => {
+        if (!showInternalDebitMode) return "Horas + KM Reduz.";
+        try {
+          const savedConfig = localStorage.getItem("gst_comissoes_config");
+          if (savedConfig) {
+            const parsed = JSON.parse(savedConfig);
+            const matched = parsed.regrasAtendimento?.find((r: any) => r.tipo.toLowerCase().trim() === tipoAtendimento.toLowerCase().trim());
+            const rule = matched || parsed.regraPadrao;
+            if (rule) {
+              if (rule.baseCalculo === "fixo") return "Taxa Fixa";
+              const hRate = Number(rule.valorHoraComissao ?? 50);
+              const kRate = Number(rule.valorKmComissao ?? 1.50);
+              return `Horas + KM Reduz. (R$ ${hRate.toFixed(2)}/h e R$ ${kRate.toFixed(2)}/km)`;
+            }
+          }
+        } catch (e) {}
+        return "Horas + KM Reduz. (R$ 50.00/h e R$ 1.50/km)";
+      })()
     };
 
     try {
@@ -547,6 +721,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       }
       if (savedOS.km_rodado_total !== undefined) setKmRodado(savedOS.km_rodado_total);
       if (savedOS.horimetro_final !== undefined) setHorimetroFinal(savedOS.horimetro_final);
+      if (savedOS.modo_debito_interno !== undefined) setShowInternalDebitMode(savedOS.modo_debito_interno || false);
+      if (savedOS.centro_custo_debito !== undefined) setCentroCustoDebito(savedOS.centro_custo_debito || "");
+      if (savedOS.observacao_debito !== undefined) setObservacaoDebito(savedOS.observacao_debito || "");
 
       return savedOS;
     } catch (err: any) {
@@ -614,8 +791,15 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   };
 
   const handleCancelOS = async () => {
-    if (!currentOS || !currentOS.id) return;
-    if (!confirm("Deseja realmente CANCELAR esta Ordem de Serviço?")) return;
+    if (!currentOS || !currentOS.id) {
+      // In sandboxed environments, confirm() is blocked. 
+      // Proceeding directly as the button click is explicit intent.
+      closeForm();
+      return;
+    }
+    
+    // In sandboxed environments, confirm() is blocked. 
+    // Proceeding directly as the button click is explicit intent.
     
     setIsLoading(true);
     try {
@@ -727,6 +911,17 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setNewApontHoraFim("");
       setNewApontDesc("");
       
+      // Transition from EM ATENDIMENTO to AGUARDANDO when a pointing hour is logged or updated!
+      if (status === "EM ATENDIMENTO") {
+        setStatus("AGUARDANDO");
+        if (activeOS && activeOS.id) {
+          await API.ordensServico.atualizar(activeOS.id, {
+            ...activeOS,
+            status: "AGUARDANDO"
+          });
+        }
+      }
+
       // Reload details from server to ensure consistency
       await loadOSDetails(activeOS);
     } catch (err) {
@@ -1192,6 +1387,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
   const selectedClientInfo = getSelectedClientInfo();
 
+
   return (
     <div className="space-y-6">
       {/* Toast Alert */}
@@ -1249,7 +1445,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                     : "bg-white text-gray-400 border border-gray-200 hover:text-gray-700"
                 }`}
               >
-                {st}
+                {st === "AGUARDANDO" ? "AGUARDANDO FINALIZAÇÃO" : st}
               </button>
             ))}
           </div>
@@ -1389,10 +1585,15 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                           <td className="p-4 text-center font-bold text-gray-800">{os.numero_os}</td>
                           <td className="p-4">
                             <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase ${statusColors[os.status]}`}>
-                              {os.status}
+                              {os.status === "AGUARDANDO" ? "AGUARDANDO FINALIZAÇÃO" : os.status}
                             </span>
                           </td>
                           <td className="p-4 font-bold text-brand-ink">
+                            {os.clientes?.codigo_sankhya ? (
+                              <span className="text-[10px] text-gray-500 font-mono bg-gray-100 px-1.5 py-0.5 rounded mr-1.5 font-extrabold">
+                                {os.clientes.codigo_sankhya}
+                              </span>
+                            ) : null}
                             {os.clientes?.razao_social || "Cliente Indefinido"}
                           </td>
                           <td className="p-4">
@@ -1537,23 +1738,104 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                     <User className="w-3.5 h-3.5" /> Cliente e Chassi
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                    <div className="sm:col-span-2">
-                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Cliente *</label>
-                      <select
-                        required
-                        value={clienteId}
-                        onChange={(e) => {
-                          setClienteId(e.target.value);
-                          setImplementoId("");
-                        }}
-                        disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                        className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red"
-                      >
-                        <option value="">Selecione o cliente proprietário...</option>
-                        {clientes.map(c => (
-                          <option key={c.id} value={c.id}>{c.razao_social}</option>
-                        ))}
-                      </select>
+                    <div className="sm:col-span-2 relative">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide block mb-1">Cliente *</label>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                          onClick={() => {
+                            setClienteDropdownOpen(!clienteDropdownOpen);
+                            setClienteSearch("");
+                          }}
+                          className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red text-left flex justify-between items-center disabled:opacity-50 min-h-[30px]"
+                        >
+                          <span className="truncate">
+                            {clienteId ? (
+                              (() => {
+                                const c = clientes.find(item => String(item.id) === clienteId);
+                                return c 
+                                  ? `${c.codigo_sankhya ? `[${c.codigo_sankhya}] ` : ""}${c.razao_social} (${c.cidade} - ${c.uf || ""})`
+                                  : "Selecione o cliente proprietário..."
+                              })()
+                            ) : (
+                              "Selecione o cliente proprietário..."
+                            )}
+                          </span>
+                          <span className="text-gray-400 text-[10px] ml-1">▼</span>
+                        </button>
+
+                        {clienteDropdownOpen && (
+                          <>
+                            {/* Backdrop to catch clicks outside the dropdown */}
+                            <div 
+                              className="fixed inset-0 z-40 cursor-default" 
+                              onClick={() => setClienteDropdownOpen(false)}
+                            />
+                            
+                            {/* Dropdown container */}
+                            <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 max-h-64 flex flex-col overflow-hidden">
+                              {/* Search input field */}
+                              <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  placeholder="Digite nome, código ou cidade para buscar..."
+                                  value={clienteSearch}
+                                  onChange={(e) => setClienteSearch(e.target.value)}
+                                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-xs outline-none focus:border-brand-red bg-white font-medium"
+                                />
+                              </div>
+                              
+                              {/* Option items list */}
+                              <div className="overflow-y-auto max-h-48 text-xs divide-y divide-gray-100">
+                                {(() => {
+                                  const cleanSearch = (clienteSearch || "")
+                                    .toLowerCase()
+                                    .normalize("NFD")
+                                    .replace(/[\u0300-\u036f]/g, "");
+                                  
+                                  const filtered = clientes.filter(c => {
+                                    const name = (c.razao_social || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                                    const city = (c.cidade || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                                    const code = String(c.codigo_sankhya || "").toLowerCase();
+                                    return name.includes(cleanSearch) || city.includes(cleanSearch) || code.includes(cleanSearch);
+                                  });
+
+                                  if (filtered.length === 0) {
+                                    return <div className="p-3 text-center text-gray-400">Nenhum cliente encontrado</div>;
+                                  }
+
+                                  return filtered.map(c => (
+                                    <button
+                                      key={c.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setClienteId(String(c.id));
+                                        setImplementoId("");
+                                        setClienteDropdownOpen(false);
+                                      }}
+                                      className={`w-full text-left px-3 py-2 hover:bg-red-50/50 hover:text-brand-ink transition-colors flex flex-col ${
+                                        clienteId === String(c.id) ? "bg-red-50 text-brand-red font-bold" : ""
+                                      }`}
+                                    >
+                                      <span className="font-semibold text-gray-800">
+                                        {c.codigo_sankhya ? (
+                                          <span className="text-brand-red font-mono font-extrabold mr-1.5 bg-red-50 border border-red-100 px-1 py-0.5 rounded text-[10px]">
+                                            {c.codigo_sankhya}
+                                          </span>
+                                        ) : null}
+                                        {c.razao_social}
+                                      </span>
+                                      <span className="text-[10px] text-gray-400 mt-0.5 font-medium">{c.cidade} - {c.uf} {c.cpf_cnpj ? `| CNPJ: ${c.cpf_cnpj}` : ""}</span>
+                                    </button>
+                                  ));
+                                })()}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Cidade proprietária</label>
@@ -1581,7 +1863,16 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                       <select
                         required
                         value={implementoId}
-                        onChange={(e) => setImplementoId(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setImplementoId(val);
+                          if (val) {
+                            const lastH = getUltimoHorimetroApontado(Number(val));
+                            setHorimetroFinal(lastH);
+                          } else {
+                            setHorimetroFinal("");
+                          }
+                        }}
                         disabled={!clienteId || status === "FINALIZADA" || status === "CANCELADA"}
                         className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red"
                       >
@@ -1613,14 +1904,24 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                       <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Tipo de Atendimento *</label>
                       <select
                         value={tipoAtendimento}
-                        onChange={(e) => setTipoAtendimento(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTipoAtendimento(val);
+                        }}
                         disabled={status === "FINALIZADA" || status === "CANCELADA"}
                         className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red"
                       >
                         {tiposAtendimentoList.length > 0 ? (
-                          tiposAtendimentoList.map((t) => (
-                            <option key={t.id} value={t.nome}>{t.nome}</option>
-                          ))
+                          <>
+                            {tiposAtendimentoList
+                              .filter((t) => !t.nome.toUpperCase().includes("(GERAL)") && !t.nome.toUpperCase().includes("GERAL"))
+                              .map((t) => (
+                                <option key={t.id} value={t.nome}>{t.nome}</option>
+                              ))}
+                            {tipoAtendimento && !tipoAtendimento.toUpperCase().includes("(GERAL)") && !tipoAtendimento.toUpperCase().includes("GERAL") && !tiposAtendimentoList.some(t => t.nome === tipoAtendimento) && (
+                              <option value={tipoAtendimento}>{tipoAtendimento}</option>
+                            )}
+                          </>
                         ) : (
                           <>
                             <option>GARANTIA</option>
@@ -1630,6 +1931,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                             <option>MONTAGEM</option>
                             <option>TREINAMENTO</option>
                             <option>OUTRO</option>
+                            {tipoAtendimento && !["GARANTIA", "ASSISTÊNCIA TÉCNICA", "REVISÃO PREVENTIVA", "ENTREGA TÉCNICA", "MONTAGEM", "TREINAMENTO", "OUTRO"].includes(tipoAtendimento) && (
+                              <option value={tipoAtendimento}>{tipoAtendimento}</option>
+                            )}
                           </>
                         )}
                       </select>
@@ -1662,19 +1966,24 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                       <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Status O.S.</label>
                       <select
                         value={status}
-                        onChange={(e) => setStatus(e.target.value as OrdemServico["status"])}
+                        onChange={(e) => {
+                          setStatus(e.target.value as OrdemServico["status"]);
+                          setIsManualStatus(true);
+                        }}
                         disabled={status === "FINALIZADA" || status === "CANCELADA"}
                         className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red font-bold"
                       >
                         <option value="ABERTA">ABERTA</option>
                         <option value="EM ATENDIMENTO">EM ATENDIMENTO</option>
                         <option value="AGENDADA">AGENDADA</option>
-                        <option value="AGUARDANDO">AGUARDANDO</option>
+                        <option value="AGUARDANDO">AGUARDANDO FINALIZAÇÃO</option>
                         <option value="FINALIZADA">FINALIZADA</option>
                         <option value="CANCELADA">CANCELADA</option>
                       </select>
                     </div>
                   </div>
+
+
 
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Reclamação ou Serviço Solicitado *</label>
@@ -2009,7 +2318,12 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                             <td className="p-2 font-bold text-brand-red uppercase text-[10px]">
                               {a.tecnicos?.apelido || a.tecnicos?.nome || "—"}
                             </td>
-                            <td className="p-2">{a.data_servico ? new Date(a.data_servico).toLocaleDateString("pt-BR") : "—"}</td>
+                            <td className="p-2">
+                              {a.data_servico ? (() => {
+                                const [y, m, d] = a.data_servico.split("-");
+                                return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString("pt-BR");
+                              })() : "—"}
+                            </td>
                             <td className="p-2 font-mono">{a.hora_inicial}</td>
                             <td className="p-2 font-mono">{a.hora_final}</td>
                             <td className="p-2 text-center font-bold text-brand-red font-mono">{a.horas_trabalhadas} h</td>
@@ -2468,10 +2782,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                     <CheckCircle2 className="w-3.5 h-3.5" /> Valores de Fechamento da O.S.
                   </h3>
 
-                  <div className="bg-amber-50 text-amber-800 p-3 rounded border border-amber-200">
-                    <strong>Atenção:</strong> Nem sempre o valor final cobrado é o que foi executado/calculado. Use os campos abaixo para definir os valores que serão efetivamente faturados.
-                  </div>
-
                   {/* SEÇÃO 1: RESUMO DO QUE FOI REALIZADO (CALCULADO) */}
                   <div className="bg-[#f0f7ff] p-4 rounded-xl border border-blue-100 mb-6">
                     <h4 className="font-bold text-blue-800 uppercase text-[11px] tracking-widest pb-2 mb-4 flex items-center gap-2 border-b border-blue-200/50">
@@ -2490,7 +2800,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                           <span>{(calcularTotalHorasTrabalhadas() * Number(valorHoraUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
                         </div>
                       </div>
-
                       <div className="bg-white p-4 rounded-lg border border-blue-50 shadow-sm transition-all hover:shadow-md">
                         <span className="text-blue-500 font-bold block uppercase text-[10px] mb-2 tracking-tight">DESLOCAMENTO REALIZADO:</span>
                         <div className="flex justify-between items-end">
@@ -2502,7 +2811,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                           <span>{(Number(kmRodado) * Number(valorKmUnitario)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
                         </div>
                       </div>
-
                       <div className="bg-white p-4 rounded-lg border border-blue-50 shadow-sm transition-all hover:shadow-md">
                         <span className="text-blue-500 font-bold block uppercase text-[10px] mb-2 tracking-tight">PEÇAS EM O.S.:</span>
                         <div className="text-2xl font-mono text-blue-900 font-bold leading-none">
@@ -2516,99 +2824,283 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   </div>
 
                   {/* SEÇÃO 2: CAMPOS PARA FATURAMENTO (COBRANÇA) */}
-                  <div className="bg-[#f2fdf7] p-4 rounded-xl border border-emerald-100 mb-6">
-                    <h4 className="font-bold text-emerald-800 uppercase text-[11px] tracking-widest pb-2 mb-4 flex items-center gap-2 border-b border-emerald-200/50">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                      VALORES PARA FATURAMENTO (COBRANÇA FINAL)
-                    </h4>
-                    
-                    <div className="space-y-6">
-                      {/* FINANCEIRO ROW */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">MÃO DE OBRA FATURADA (R$)</label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
-                            <input
-                              type="number"
-                              min={0}
-                              step={0.01}
-                              value={valorMaoObra || ""}
-                              onChange={(e) => {
-                                setValorMaoObra(Number(e.target.value));
-                                setMaoObraManual(true);
-                              }}
-                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                              className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">DESLOCAMENTO FATURADO (R$)</label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
-                            <input
-                              type="number"
-                              min={0}
-                              step={0.01}
-                              value={valorDeslocamento || ""}
-                              onChange={(e) => {
-                                setValorDeslocamento(Number(e.target.value));
-                                setDeslocamentoManual(true);
-                              }}
-                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                              className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">SERV. TERCEIROS / OUTROS (R$)</label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
-                            <input
-                              type="number"
-                              min={0}
-                              step={0.01}
-                              value={outrosCustos || ""}
-                              onChange={(e) => setOutrosCustos(Number(e.target.value))}
-                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                              className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
-                            />
-                          </div>
-                        </div>
+                    <div className={`p-4 rounded-xl border mb-6 transition-all duration-300 ${showInternalDebitMode ? 'bg-amber-50 border-amber-200 shadow-inner' : 'bg-[#f2fdf7] border-emerald-100'}`}>
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end border-b pb-2 mb-4 gap-2 border-current opacity-80">
+                        <h4 className={`font-bold uppercase text-[11px] tracking-widest flex items-center gap-2 ${showInternalDebitMode ? 'text-amber-800' : 'text-emerald-800'}`}>
+                          <div className={`w-2 h-2 rounded-full ${showInternalDebitMode ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></div>
+                          {showInternalDebitMode ? 'MODO: SERVIÇO DE DÉBITO INTERNO' : 'VALORES PARA FATURAMENTO (COBRANÇA FINAL)'}
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!showInternalDebitMode) {
+                              setShowInternalDebitMode(true);
+                              setValorMaoObra(0);
+                              setMaoObraManual(true);
+                              setValorDeslocamento(0);
+                              setDeslocamentoManual(true);
+                              setOutrosCustos(0);
+                              // Look for first valid rule from comissoes_config
+                              let firstRule = "DÉBITO INTERNO";
+                              try {
+                                const savedConfig = localStorage.getItem("gst_comissoes_config");
+                                if (savedConfig) {
+                                  const parsed = JSON.parse(savedConfig);
+                                  if (parsed.regrasAtendimento && parsed.regrasAtendimento.length > 0) {
+                                    firstRule = parsed.regrasAtendimento[0].tipo;
+                                  }
+                                }
+                              } catch(e) {}
+                              setTipoAtendimento(firstRule);
+                              showToast("Modo de Débito Interno ativado. Valores de faturamento zerados.", "info");
+                            } else {
+                              setShowInternalDebitMode(false);
+                            }
+                          }}
+                          disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                          className={`text-[10px] uppercase font-bold px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 border shadow-sm ${
+                            showInternalDebitMode 
+                              ? 'bg-amber-600 text-white border-amber-700 hover:bg-amber-700' 
+                              : 'bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50'
+                          }`}
+                        >
+                          {showInternalDebitMode ? (
+                            <><X className="w-3 h-3" /> Sair do Modo Interno</>
+                          ) : (
+                            <><CheckCircle2 className="w-3 h-3" /> Serviço de Débito Interno</>
+                          )}
+                        </button>
                       </div>
 
-                      {/* DOCUMENT ROW */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-emerald-100/50">
-                        <div>
-                          <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1.5">Nº NFS (SERVIÇO)</label>
-                          <input
-                            type="text"
-                            value={numNotaFiscal || ""}
-                            onChange={(e) => setNumNotaFiscal(e.target.value)}
-                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Nº da NFS"
-                            className="w-full border border-emerald-200 focus:border-emerald-500 rounded-lg px-4 py-2 text-sm bg-white font-medium text-emerald-900 outline-none transition-all"
-                          />
+                      {showInternalDebitMode && (
+                        <div className="bg-white/60 p-4 rounded-lg border border-amber-200 mb-6 animate-in slide-in-from-top-2 duration-300">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                              <label className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block mb-1.5">CLASSIFICAÇÃO DO ATENDIMENTO INTERNO</label>
+                              <select
+                                value={tipoAtendimento}
+                                onChange={(e) => setTipoAtendimento(e.target.value)}
+                                disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                                className="w-full border border-amber-200 focus:border-amber-500 rounded-lg px-3 py-2 text-sm bg-white font-bold text-amber-900 outline-none"
+                              >
+                                <option value="">Selecione o Tipo...</option>
+                                {(() => {
+                                  try {
+                                    const savedConfig = localStorage.getItem("gst_comissoes_config");
+                                    const options: React.ReactNode[] = [];
+                                    let hasSavedValue = false;
+                                    
+                                    if (savedConfig) {
+                                      const parsed = JSON.parse(savedConfig);
+                                      if (parsed.regrasAtendimento && Array.isArray(parsed.regrasAtendimento)) {
+                                        parsed.regrasAtendimento
+                                          .filter((r: any) => !r.tipo.toUpperCase().includes("(GERAL)") && !r.tipo.toUpperCase().includes("GERAL"))
+                                          .forEach((r: any, idx: number) => {
+                                            if (r.tipo === tipoAtendimento) {
+                                              hasSavedValue = true;
+                                            }
+                                            options.push(
+                                              <option key={idx} value={r.tipo}>{r.tipo}</option>
+                                            );
+                                          });
+                                      }
+                                    }
+                                    
+                                    if (tipoAtendimento && !tipoAtendimento.toUpperCase().includes("(GERAL)") && !tipoAtendimento.toUpperCase().includes("GERAL") && !hasSavedValue) {
+                                      options.push(
+                                        <option key="saved-fallback" value={tipoAtendimento}>{tipoAtendimento}</option>
+                                      );
+                                    }
+                                    
+                                    return options;
+                                  } catch (e) {
+                                    console.error("Erro ao ler regras de atendimento:", e);
+                                  }
+                                  return null;
+                                })()}
+                              </select>
+                              <p className="text-[9px] text-amber-600 mt-1 italic">
+                                * Esta seleção define a regra de comissão do técnico para este serviço interno.
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block mb-1.5">VALOR TOTAL DO SERVIÇO (REFERÊNCIA)</label>
+                              <div className="flex items-center gap-3">
+                                {(() => {
+                                  let calcValue = 0;
+                                  let calcLabel = "Horas + KM Reduz.";
+                                  try {
+                                    const savedConfig = localStorage.getItem("gst_comissoes_config");
+                                    if (savedConfig) {
+                                      const parsed = JSON.parse(savedConfig);
+                                      const matched = parsed.regrasAtendimento?.find((r: any) => r.tipo.toLowerCase().trim() === tipoAtendimento.toLowerCase().trim());
+                                      const rule = matched || parsed.regraPadrao;
+                                      
+                                      if (rule) {
+                                        if (rule.baseCalculo === "fixo") {
+                                          calcValue = Number(rule.valorTecnico || 0) + (rule.relacaoAuxiliar === "desabilitado" ? 0 : Number(rule.valorAuxiliar || 0));
+                                          calcLabel = "Taxa Fixa";
+                                        } else {
+                                          const hRate = Number(rule.valorHoraComissao ?? 50);
+                                          const kRate = Number(rule.valorKmComissao ?? 1.50);
+                                          calcValue = (calcularTotalHorasTrabalhadas() * hRate) + (Number(kmRodado) * kRate);
+                                          calcLabel = `Horas + KM Reduz. (R$ ${hRate.toFixed(2)}/h e R$ ${kRate.toFixed(2)}/km)`;
+                                        }
+                                      } else {
+                                        calcValue = (calcularTotalHorasTrabalhadas() * 50) + (Number(kmRodado) * 1.50);
+                                        calcLabel = "Horas + KM Reduz. (R$ 50.00/h e R$ 1.50/km)";
+                                      }
+                                    } else {
+                                      calcValue = (calcularTotalHorasTrabalhadas() * 50) + (Number(kmRodado) * 1.50);
+                                      calcLabel = "Horas + KM Reduz. (R$ 50.00/h e R$ 1.50/km)";
+                                    }
+                                  } catch (e) {
+                                    calcValue = (calcularTotalHorasTrabalhadas() * 50) + (Number(kmRodado) * 1.50);
+                                    calcLabel = "Horas + KM Reduz. (R$ 50.00/h e R$ 1.50/km)";
+                                  }
+
+                                  return (
+                                    <>
+                                      <div className="flex-1 bg-amber-100/50 border border-amber-200 rounded-lg px-4 py-2 font-mono text-lg font-bold text-amber-900">
+                                        {calcValue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                                      </div>
+                                      <div className="text-[10px] text-amber-600 font-medium leading-tight">
+                                        Cálculo base:<br/>{calcLabel}
+                                      </div>
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 pt-4 border-t border-amber-100">
+                            <label className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block mb-1.5">OBSERVAÇÃO / CENTRO DE CUSTO DO DÉBITO INTERNO</label>
+                            <input
+                              type="text"
+                              list="centros-custo-datalist-global"
+                              placeholder="Selecione um Centro de Custo cadastrado ou digite..."
+                              value={observacaoDebito}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setObservacaoDebito(val);
+                                if (centrosCustoOpcoes.includes(val)) {
+                                  setCentroCustoDebito(val);
+                                }
+                              }}
+                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                              className="w-full border border-amber-200 focus:border-amber-500 rounded-lg px-3 py-2 text-sm bg-white font-bold text-amber-900 outline-none placeholder-amber-400/60 shadow-sm"
+                            />
+                            <p className="text-[9px] text-amber-600 mt-1 italic">
+                              * Clique duas vezes ou comece a digitar para selecionar um centro de custo cadastrado.
+                            </p>
+                          </div>
                         </div>
-                        <div className="md:col-span-2">
-                          <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1.5">REFERÊNCIA / OBS. FATURAMENTO</label>
-                          <input
-                            type="text"
-                            value={notaFiscal || ""}
-                            onChange={(e) => setNotaFiscal(e.target.value)}
-                            disabled={status === "FINALIZADA" || status === "CANCELADA"}
-                            placeholder="Ex: Faturado conforme pedido X..."
-                            className="w-full border border-emerald-200 focus:border-emerald-500 rounded-lg px-4 py-2 text-sm bg-white font-medium text-emerald-900 outline-none transition-all"
-                          />
+                      )}
+                      
+                      <div className="space-y-6">
+                        {/* FINANCEIRO ROW */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div>
+                            <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">MÃO DE OBRA FATURADA (R$)</label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={valorMaoObra || ""}
+                                onChange={(e) => {
+                                  setValorMaoObra(Number(e.target.value));
+                                  setMaoObraManual(true);
+                                }}
+                                disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                                className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">DESLOCAMENTO FATURADO (R$)</label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={valorDeslocamento || ""}
+                                onChange={(e) => {
+                                  setValorDeslocamento(Number(e.target.value));
+                                  setDeslocamentoManual(true);
+                                }}
+                                disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                                className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block mb-1.5">SERV. TERCEIROS / OUTROS (R$)</label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-bold text-sm">R$</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={outrosCustos || ""}
+                                onChange={(e) => setOutrosCustos(Number(e.target.value))}
+                                disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                                className="w-full border-2 border-emerald-100 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2.5 text-lg bg-white font-mono font-bold text-emerald-800 outline-none transition-all shadow-sm"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* DOCUMENT ROW */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-emerald-100/50">
+                          <div>
+                            <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1.5">Nº NFS (SERVIÇO)</label>
+                            <input
+                              type="text"
+                              value={numNotaFiscal || ""}
+                              onChange={(e) => setNumNotaFiscal(e.target.value)}
+                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                              placeholder="Nº da NFS"
+                              className="w-full border border-emerald-200 focus:border-emerald-500 rounded-lg px-4 py-2 text-sm bg-white font-medium text-emerald-900 outline-none transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1.5">CENTRO DE CUSTO</label>
+                            <input
+                              type="text"
+                              list="centros-custo-datalist-global"
+                              value={centroCustoDebito || ""}
+                              onChange={(e) => setCentroCustoDebito(e.target.value)}
+                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                              placeholder="Selecione ou digite..."
+                              className="w-full border border-emerald-200 focus:border-emerald-500 rounded-lg px-4 py-2 text-sm bg-white font-bold text-emerald-900 outline-none transition-all"
+                            />
+                            <datalist id="centros-custo-datalist-global">
+                              {centrosCustoOpcoes.map((item, idx) => (
+                                <option key={idx} value={item} />
+                              ))}
+                            </datalist>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1.5">REFERÊNCIA / OBS. FATURAMENTO</label>
+                            <input
+                              type="text"
+                              value={notaFiscal || ""}
+                              onChange={(e) => setNotaFiscal(e.target.value)}
+                              disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                              placeholder="Ex: Faturado conforme pedido X..."
+                              className="w-full border border-emerald-200 focus:border-emerald-500 rounded-lg px-4 py-2 text-sm bg-white font-medium text-emerald-900 outline-none transition-all"
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-
-                {/* Orçamento Final Summary */}
+                  {/* Orçamento Final Summary */}
                 <div className="border border-gray-200 p-6 rounded-xl bg-gray-50 shadow-sm">
                   <h3 className="text-xs font-black uppercase text-gray-800 tracking-widest mb-4">ORÇAMENTO FINAL DO FECHAMENTO</h3>
                   
@@ -2774,7 +3266,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
             </div>
 
             {/* Printable Document Area */}
-            <div className="flex-1 overflow-y-auto p-8 print:p-0 bg-white font-sans" id="printable-os-invoice">
+            <div className="flex-1 overflow-y-auto p-8 print:p-0 bg-white font-sans printable-area" id="printable-os-invoice">
               <div className="space-y-6 text-brand-ink text-xs max-w-[800px] mx-auto print:max-w-none">
                 
                 {/* Header of Invoice */}
@@ -2808,6 +3300,36 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 </div>
 
                 {/* Main OS fields mapping */}
+                {printPreviewOS.modo_debito_interno && (
+                  <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide block">Modo de Débito Interno</span>
+                      <span className="font-extrabold text-amber-900 uppercase">
+                        {printPreviewOS.classificacao_atendimento_interno || printPreviewOS.tipo_atendimento || "Serviço Interno"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide block">Centro de Custo</span>
+                      <span className="font-mono font-extrabold text-amber-900 uppercase">
+                        {printPreviewOS.centro_custo_debito || "Não Informado"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide block">Base p/ Referência</span>
+                      <span className="font-bold text-amber-900">
+                        {printPreviewOS.base_calculo_referencia || "Horas + KM Reduz."}
+                        {printPreviewOS.valor_referencia_servico ? ` (${printPreviewOS.valor_referencia_servico.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })})` : ""}
+                      </span>
+                    </div>
+                    {printPreviewOS.observacao_debito && (
+                      <div className="sm:col-span-3 border-t border-amber-200/50 pt-2 -mt-1">
+                        <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide block">Observação do Débito</span>
+                        <span className="text-amber-800 font-semibold italic">{printPreviewOS.observacao_debito}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 print:grid-cols-2">
                   
                   {/* Client details block */}
@@ -2968,83 +3490,75 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 </div>
 
                 {/* Subtotals & Final Financial Breakdown */}
-                <div className="border border-gray-200 rounded-lg p-4 bg-gray-50/60 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs print:grid-cols-4">
-                  <div>
-                    <span className="text-gray-400 font-bold block uppercase text-[9px]">Peças e Insumos:</span>
-                    <strong className="font-mono text-gray-700 mt-1 block">
-                      {(() => {
-                        let parsed: PecaItem[] = [];
-                        try {
-                          const stored = localStorage.getItem(`gst_os_pecas_${printPreviewOS.id}`);
-                          if (stored) parsed = JSON.parse(stored);
-                        } catch (e) { console.warn(e); }
-                        const sum = parsed.reduce((acc, curr) => acc + (curr.xml_imported ? 0 : (curr.quantidade * curr.valor_unitario)), 0);
-                        return sum.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-                      })()}
-                    </strong>
-                  </div>
+                {(() => {
+                  let parsedPecas: PecaItem[] = [];
+                  try {
+                    const stored = localStorage.getItem(`gst_os_pecas_${printPreviewOS.id}`);
+                    if (stored) parsedPecas = JSON.parse(stored);
+                  } catch (e) { console.warn(e); }
+                  const sumPecas = parsedPecas.reduce((acc, curr) => acc + (curr.xml_imported ? 0 : (curr.quantidade * curr.valor_unitario)), 0);
 
-                  <div>
-                    <span className="text-gray-400 font-bold block uppercase text-[9px]">Mão de Obra Técnica:</span>
-                    <strong className="font-mono text-gray-700 mt-1 block">
-                      {(() => {
-                        if (printPreviewOS.valor_mao_obra !== undefined && printPreviewOS.valor_mao_obra > 0) {
-                          return printPreviewOS.valor_mao_obra.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-                        }
-                        const tech = tecnicos.find(t => t.id === printPreviewOS.tecnico_id);
-                        const rate = tech?.valor_hora || 0;
-                        const duration = printPreviewOS.apontamentos?.reduce((acc, curr) => acc + parseFloat(curr.horas_trabalhadas || "0"), 0) || 0;
-                        return (duration * rate).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-                      })()}
-                    </strong>
-                  </div>
+                  const tech = tecnicos.find(t => t.id === printPreviewOS.tecnico_id);
+                  const rateTech = printPreviewOS.valor_hora_unitario || tech?.valor_hora || 150;
+                  const duration = printPreviewOS.apontamentos?.reduce((acc, curr) => acc + parseFloat(curr.horas_trabalhadas || "0"), 0) || 0;
+                  const sumTech = (printPreviewOS.valor_mao_obra !== undefined && printPreviewOS.valor_mao_obra > 0)
+                    ? printPreviewOS.valor_mao_obra
+                    : duration * rateTech;
 
-                  <div>
-                    <span className="text-gray-400 font-bold block uppercase text-[9px]">Deslocamento (KM):</span>
-                    <strong className="font-mono text-gray-700 mt-1 block">
-                      {(() => {
-                        if (printPreviewOS.valor_deslocamento !== undefined && printPreviewOS.valor_deslocamento > 0) {
-                          return printPreviewOS.valor_deslocamento.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-                        }
-                        const km = printPreviewOS.km_rodado_total || printPreviewOS.km_rodado || 0;
-                        return (Number(km) * 2.5).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-                      })()}
-                    </strong>
-                  </div>
+                  const km = Number(printPreviewOS.km_rodado_total || printPreviewOS.km_rodado || 0);
+                  const rateKm = printPreviewOS.valor_km_unitario || 2.50;
+                  const sumDesloc = (printPreviewOS.valor_deslocamento !== undefined && printPreviewOS.valor_deslocamento > 0)
+                    ? printPreviewOS.valor_deslocamento
+                    : km * rateKm;
 
-                  <div className="border-l pl-4 border-gray-300">
-                    <span className="text-brand-red font-extrabold block uppercase text-[9px]">Valor Total Faturado:</span>
-                    <strong className="font-mono text-base text-brand-red font-black mt-1 block">
-                      {(() => {
-                        if (printPreviewOS.valor_total !== undefined && printPreviewOS.valor_total > 0) {
-                          return printPreviewOS.valor_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-                        }
-                        let parsed: PecaItem[] = [];
-                        try {
-                          const stored = localStorage.getItem(`gst_os_pecas_${printPreviewOS.id}`);
-                          if (stored) parsed = JSON.parse(stored);
-                        } catch (e) { console.warn(e); }
-                        const sumPecas = parsed.reduce((acc, curr) => acc + (curr.xml_imported ? 0 : (curr.quantidade * curr.valor_unitario)), 0);
+                  const sumTerceiros = Number(printPreviewOS.valor_terceiros || printPreviewOS.outros_custos || 0);
 
-                        const tech = tecnicos.find(t => t.id === printPreviewOS.tecnico_id);
-                        const rate = tech?.valor_hora || 0;
-                        const duration = printPreviewOS.apontamentos?.reduce((acc, curr) => acc + parseFloat(curr.horas_trabalhadas || "0"), 0) || 0;
-                        const sumTech = printPreviewOS.valor_mao_obra !== undefined && printPreviewOS.valor_mao_obra > 0
-                          ? printPreviewOS.valor_mao_obra
-                          : duration * rate;
+                  const sumCalculatedTotal = sumPecas + sumTech + sumDesloc + sumTerceiros;
+                  const totalFaturado = (printPreviewOS.valor_total !== undefined && printPreviewOS.valor_total > 0)
+                    ? printPreviewOS.valor_total
+                    : sumCalculatedTotal;
 
-                        const km = printPreviewOS.km_rodado_total || printPreviewOS.km_rodado || 0;
-                        const sumDesloc = printPreviewOS.valor_deslocamento !== undefined && printPreviewOS.valor_deslocamento > 0
-                          ? printPreviewOS.valor_deslocamento
-                          : Number(km) * 2.5;
+                  return (
+                    <div className={`border border-gray-200 rounded-lg p-4 bg-gray-50/60 grid grid-cols-2 ${sumTerceiros > 0 ? 'md:grid-cols-5 print:grid-cols-5' : 'md:grid-cols-4 print:grid-cols-4'} gap-4 text-xs`}>
+                      <div>
+                        <span className="text-gray-400 font-bold block uppercase text-[9px]">Peças e Insumos:</span>
+                        <strong className="font-mono text-gray-700 mt-1 block">
+                          {sumPecas.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </strong>
+                      </div>
 
-                        const other = Number(printPreviewOS.valor_terceiros || printPreviewOS.outros_custos || 0);
+                      <div>
+                        <span className="text-gray-400 font-bold block uppercase text-[9px]">Mão de Obra Técnica:</span>
+                        <strong className="font-mono text-gray-700 mt-1 block">
+                          {sumTech.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </strong>
+                      </div>
 
-                        return (sumPecas + sumTech + sumDesloc + other).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-                      })()}
-                    </strong>
-                  </div>
-                </div>
+                      <div>
+                        <span className="text-gray-400 font-bold block uppercase text-[9px]">Deslocamento (KM):</span>
+                        <strong className="font-mono text-gray-700 mt-1 block">
+                          {sumDesloc.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </strong>
+                      </div>
+
+                      {sumTerceiros > 0 && (
+                        <div>
+                          <span className="text-gray-400 font-bold block uppercase text-[9px]">Serv. Terceiros / Outros:</span>
+                          <strong className="font-mono text-gray-700 mt-1 block">
+                            {sumTerceiros.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          </strong>
+                        </div>
+                      )}
+
+                      <div className="border-l pl-4 border-gray-300">
+                        <span className="text-brand-red font-extrabold block uppercase text-[9px]">Valor Total Faturado:</span>
+                        <strong className="font-mono text-base text-brand-red font-black mt-1 block">
+                          {totalFaturado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </strong>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Signature Fields */}
                 <div className="pt-8 grid grid-cols-2 gap-12 text-center text-[11px] print:grid-cols-2">
@@ -3099,7 +3613,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
             </div>
 
             {/* Printable Document Area */}
-            <div className="flex-1 overflow-y-auto p-8 print:p-0 bg-white font-sans text-xs text-black" id="printable-os-campo">
+            <div className="flex-1 overflow-y-auto p-8 print:p-0 bg-white font-sans text-xs text-black printable-area" id="printable-os-campo">
               <div className="max-w-[850px] mx-auto space-y-4 border border-black p-5 rounded-xl bg-white print:max-w-none print:border-none print:p-0">
                 
                 {/* 1. TOP HEADER BRAND BOX */}
