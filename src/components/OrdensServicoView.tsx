@@ -753,9 +753,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     // Retrieve equipment to validate horimetro
     const equipment = implementos.find(i => i.id === Number(implementoId));
     if (equipment) {
-      // Standard Apps Script validation rule: must be greater or equal
-      // For fallback we mock current as 0 if undefined
-      const currentHorimetro = Number(equipment.ano) || 0; // fallback if no specific field
+      const currentHorimetro = Number(equipment.horimetro_atual) || 0;
       if (Number(horimetroFinal) < currentHorimetro) {
         showToast(`O horímetro informado (${horimetroFinal} h) é menor que o atual (${currentHorimetro} h).`, "error");
         return;
@@ -773,6 +771,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         if (equipment && equipment.id) {
           await API.implementos.atualizar(equipment.id, {
             ...equipment,
+            horimetro_atual: Number(horimetroFinal),
             observacao: `${equipment.observacao || ""}\n[Atendimento O.S. ${saved.numero_os} em ${new Date().toLocaleDateString("pt-BR")} - Horímetro: ${horimetroFinal}h]`.trim()
           });
         }

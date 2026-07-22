@@ -35,6 +35,7 @@ export interface Implemento {
   modelo: string;
   numero_serie: string;
   ano?: number;
+  horimetro_atual?: number;
   data_entrega?: string;
   ativo?: boolean;
   observacao?: string;
@@ -100,6 +101,7 @@ export interface OrdemServico {
   num_nota_fiscal?: string;
   data_nota_fiscal?: string;
   valor_total?: number;
+  horimetro?: number;
   horimetro_final?: number;
   revisao_executada?: string;
 

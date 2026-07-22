@@ -659,7 +659,7 @@ export function AppContent() {
                   )}
 
                   {activeTab.view === "planos" && (
-                    <PlanosView />
+                    <PlanosView onNavigate={handleNavigateWithTarget} />
                   )}
                   {activeTab.view === "veiculos" && <VeiculosView />}
                   {activeTab.view === "tipos_atendimento" && <TiposAtendimentoView />}

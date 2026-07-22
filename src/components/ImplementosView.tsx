@@ -216,8 +216,10 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
     // Sum costs from finalized related O.S.
     const finalized = relatedOS.filter(o => o.status === "FINALIZADA");
     
-    // Last horimetro
-    const lastHorimetro = finalized.reduce((max, o) => Math.max(max, Number(o.horimetro_final) || 0), 0);
+    // Last horimetro: maximum of equipment.horimetro_atual, or any related OS horimetro_final
+    const targetImpl = implementos.find(i => i.id === implId);
+    const osMaxHorimetro = relatedOS.reduce((max, o) => Math.max(max, Number(o.horimetro_final) || Number(o.horimetro) || 0), 0);
+    const lastHorimetro = Math.max(Number(targetImpl?.horimetro_atual) || 0, osMaxHorimetro);
 
     const labor = finalized.reduce((sum, o) => sum + (Number(o.valor_mao_obra) || 0), 0);
     const travel = finalized.reduce((sum, o) => sum + (Number(o.valor_deslocamento) || 0), 0);
@@ -875,7 +877,28 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
                       const planRevs = API.planos.revisoes.listar(selectedImplemento.plano_id);
                       const relatedOS = ordens.filter(o => o.implemento_id === selectedImplemento.id);
                       const finishedOS = relatedOS.filter(o => o.status === "FINALIZADA");
-                      const currentHorimetro = finishedOS.reduce((max, o) => Math.max(max, Number(o.horimetro_final) || 0), 0);
+                      const osMaxHorimetro = relatedOS.reduce((max, o) => Math.max(max, Number(o.horimetro_final) || Number(o.horimetro) || 0), 0);
+                      const currentHorimetro = Math.max(Number(selectedImplemento.horimetro_atual) || 0, osMaxHorimetro);
+
+                      const overdueRevs = planRevs.filter(rev => {
+                        const matchingOS = finishedOS.find(o => {
+                          const revExec = (o.revisao_executada || "").toLowerCase().replace(/\s+/g, "");
+                          const descMatch = (o.revisao_executada || "").toLowerCase().includes(rev.descricao.toLowerCase());
+                          const matchH = revExec.includes(`${rev.horas_limite}h`) || revExec === `${rev.horas_limite}` || revExec.includes(`revisãode${rev.horas_limite}`);
+                          return matchH || descMatch;
+                        });
+                        return !matchingOS && currentHorimetro >= rev.horas_limite;
+                      });
+
+                      const nearRevs = planRevs.filter(rev => {
+                        const matchingOS = finishedOS.find(o => {
+                          const revExec = (o.revisao_executada || "").toLowerCase().replace(/\s+/g, "");
+                          const descMatch = (o.revisao_executada || "").toLowerCase().includes(rev.descricao.toLowerCase());
+                          const matchH = revExec.includes(`${rev.horas_limite}h`) || revExec === `${rev.horas_limite}` || revExec.includes(`revisãode${rev.horas_limite}`);
+                          return matchH || descMatch;
+                        });
+                        return !matchingOS && currentHorimetro < rev.horas_limite && (rev.horas_limite - currentHorimetro <= 50);
+                      });
 
                       if (planRevs.length === 0) {
                         return (
@@ -889,14 +912,43 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
 
                       return (
                         <div className="space-y-4">
+                          {/* Alert Banners */}
+                          {overdueRevs.length > 0 && (
+                            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-900 flex items-start gap-2 shadow-sm">
+                              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                              <div>
+                                <strong className="font-extrabold block text-rose-950">⚠️ ALERTA: REVISÃO PREVENTIVA PENDENTE / ATRASADA</strong>
+                                <span>O horímetro atual do equipamento ({currentHorimetro}h) atingiu ou ultrapassou <strong>{overdueRevs.length} etapa(s)</strong> do plano sem comprovação de O.S. concluída ({overdueRevs.map(r => `${r.horas_limite}h`).join(", ")}). Abra uma Ordem de Serviço de revisão para registrar o atendimento e manter a garantia.</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {overdueRevs.length === 0 && nearRevs.length > 0 && (
+                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-start gap-2 shadow-sm">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                              <div>
+                                <strong className="font-extrabold block text-amber-950">🔔 AVISO PREVENTIVO: REVISÃO PRÓXIMA DO LIMITE</strong>
+                                <span>Equipamento está a apenas <strong>{nearRevs[0].horas_limite - currentHorimetro}h</strong> de atingir a próxima revisão agendada (Etapa #{nearRevs[0].revisao_numero} — {nearRevs[0].horas_limite}h).</span>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-lg text-xs text-blue-900 flex items-start gap-2">
+                            <Clock className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                            <div className="leading-relaxed">
+                              <strong className="font-bold text-blue-950 block">ℹ️ O que é o Status "AGENDADA"?</strong>
+                              <span>Indica etapas de manutenção preventiva do fabricante previstas para o futuro. O sistema monitora o horímetro acumulado nas Ordens de Serviço e emite alertas amarelos/vermelhos conforme a máquina se aproxima do limite. Quando a O.S. correspondente for finalizada, o status mudará automaticamente para <strong>CONCLUÍDA</strong>.</span>
+                            </div>
+                          </div>
+
                           <div className="flex justify-between items-center bg-gray-50 border border-gray-150 p-3 rounded-lg">
                             <div>
                               <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded">Plano Associado</span>
                               <h5 className="font-extrabold text-gray-800 text-sm mt-1">{plano.fabricante} — {plano.modelo}</h5>
                             </div>
                             <div className="text-right">
-                              <span className="text-gray-400 font-bold block text-[10px]">Horímetro Atual (Máximo em O.S.)</span>
-                              <span className="font-mono font-black text-gray-700 text-sm">{currentHorimetro} h</span>
+                              <span className="text-gray-400 font-bold block text-[10px]">Horímetro Atual Registrado</span>
+                              <span className="font-mono font-black text-gray-800 text-sm">{currentHorimetro} h</span>
                             </div>
                           </div>
 

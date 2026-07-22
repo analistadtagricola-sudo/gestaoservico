@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Cpu, CheckCircle2, AlertCircle, FileSpreadsheet, UploadCloud, RefreshCw, Check, FileText, ClipboardList } from "lucide-react";
+import { Cpu, CheckCircle2, AlertCircle, FileSpreadsheet, UploadCloud, RefreshCw, Check, FileText, ClipboardList, Trash2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { API } from "../lib/api";
 import { Cliente, Implemento, OrdemServico } from "../types";
@@ -95,6 +95,56 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
   };
 
   // Process Clientes Import
+  
+const cleanUf = (raw: any, fallback = "RO"): string => {
+  if (!raw) return fallback;
+  const s = String(raw).toUpperCase().trim();
+  if (s.includes("ROND")) return "RO";
+  if (s.includes("ACRE")) return "AC";
+  if (s.includes("AMAZON")) return "AM";
+  if (s.includes("MATO GROSSO DO SUL")) return "MS";
+  if (s.includes("MATO GROSSO")) return "MT";
+  if (s.includes("PARAN")) return "PR";
+  if (s.includes("SÃO PAULO") || s.includes("SAO PAULO")) return "SP";
+  if (s.includes("MINAS")) return "MG";
+  if (s.includes("GOI")) return "GO";
+  const match = s.match(/\b([A-Z]{2})\b/);
+  if (match) return match[1];
+  return s.substring(0, 2) || fallback;
+};
+
+const cleanTipoPessoa = (raw: any, cpfCnpjStr: string, fallback: "F" | "J" = "F"): "F" | "J" => {
+  if (raw) {
+    const s = String(raw).toUpperCase().trim();
+    if (s.startsWith("J") || s.includes("PJ") || s.includes("JURID")) return "J";
+    if (s.startsWith("F") || s.includes("PF") || s.includes("FISIC") || s.includes("FÍSIC")) return "F";
+  }
+  const digits = String(cpfCnpjStr || "").replace(/\D/g, "");
+  if (digits.length > 11) return "J";
+  if (digits.length > 0) return "F";
+  return fallback;
+};
+
+const normalizeKey = (k: string) => k ? String(k).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "") : "";
+
+  const extractField = (rowObj: any, possibleKeys: string[] | any, fallback: any = "") => {
+    if (!rowObj || typeof rowObj !== "object") return fallback;
+    const keysArray = Array.isArray(possibleKeys) ? possibleKeys : [possibleKeys];
+
+    const normalizedRow: Record<string, any> = {};
+    Object.keys(rowObj).forEach(k => {
+      normalizedRow[normalizeKey(k)] = rowObj[k];
+    });
+
+    for (const pk of keysArray) {
+      const normPk = normalizeKey(pk);
+      if (normalizedRow[normPk] !== undefined && normalizedRow[normPk] !== null && String(normalizedRow[normPk]).trim() !== "") {
+        return normalizedRow[normPk];
+      }
+    }
+    return fallback;
+  };
+
   const processClientesImport = async (json: any[]) => {
     // 1. Fetch current database clients to perform ultra-fast in-memory lookup map
     const existingList = await API.clientes.listar();
@@ -123,14 +173,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
     const newLogs: typeof importLogs = [];
 
     // Helper to extract fields from multiple potential columns, preserving database values if column is absent
-    const getField = (rowObj: any, keys: string[], fallback: any) => {
-      for (const k of keys) {
-        if (k in rowObj && rowObj[k] !== undefined && rowObj[k] !== null) {
-          return rowObj[k];
-        }
-      }
-      return fallback;
-    };
+    
 
     // 2. Process rows with intelligence
     for (let i = 0; i < json.length; i++) {
@@ -141,13 +184,13 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
       // ID Match checking first
       let existing = null;
-      const rawId = row["ID"] || row["id"] || row["Id"] || "";
+      const rawId = extractField(row, ["ID", "id", "Id", "Código", "Codigo"], "");
       if (rawId && !isNaN(Number(rawId))) {
         existing = existingList.find(c => c.id === Number(rawId));
       }
 
       // Standard mappings mirroring importador.js
-      const codParceiro = getField(row, ["Cód. Parceiro", "Cód Parceiro", "Cod. Parceiro", "Cod Parceiro", "Codigo", "id", "Código", "Cód. Sankhya", "Cód Sankhya", "Cod Sankhya"], existing?.codigo_sankhya);
+      const codParceiro = extractField(row, ["Cód. Parceiro", "Cód Parceiro", "Cod. Parceiro", "Cod Parceiro", "Codigo", "id", "Código", "Cód. Sankhya", "Cód Sankhya", "Cod Sankhya"], existing?.codigo_sankhya);
       const nameUfCidade = row["Nome + UF (Cidade)"] || row["Cidade"] || "";
       let parsedCidade = "";
       let parsedUf = "RO";
@@ -161,7 +204,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
         parsedUf = row["UF"] || row["uf"] || "RO";
       }
 
-      const rawAtivo = getField(row, ["Ativo"], null);
+      const rawAtivo = extractField(row, ["Ativo"], null);
       let isAtivo = true;
       if (rawAtivo !== null) {
         const strAtivo = String(rawAtivo).toUpperCase().trim();
@@ -170,32 +213,41 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
         isAtivo = existing.ativo !== false;
       }
 
-      const rawCpfCnpj = getField(row, ["CNPJ / CPF", "CNPJ", "CPF", "CNPJ/CPF", "Cpf/Cnpj", "Cpf", "Cnpj"], existing?.cpf_cnpj || "");
+      const rawCpfCnpj = extractField(row, ["CNPJ / CPF", "CNPJ", "CPF", "CNPJ/CPF", "Cpf/Cnpj", "Cpf", "Cnpj"], existing?.cpf_cnpj || "");
+
+      let finalCodSankhya = codParceiro ? String(codParceiro).trim() : undefined;
+      if (!finalCodSankhya && !existing) {
+        finalCodSankhya = `IMP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      }
 
       const mappedCliente: Cliente = {
-        codigo_sankhya: codParceiro ? String(codParceiro).trim() : undefined,
-        tipo_pessoa: getField(row, ["Tipo de pessoa", "Tipo"], existing?.tipo_pessoa || ((String(rawCpfCnpj || "").replace(/\D/g, "").length > 11) ? "J" : "F")),
+        codigo_sankhya: finalCodSankhya ? String(finalCodSankhya).substring(0, 20) : undefined,
+        tipo_pessoa: cleanTipoPessoa(
+          extractField(row, ["Tipo de pessoa", "Tipo"], existing?.tipo_pessoa),
+          rawCpfCnpj,
+          "F"
+        ),
         ativo: isAtivo,
-        razao_social: String(getField(row, ["Razão social", "Razao social", "Nome", "Cliente", "Razão Social", "Razao Social"], existing?.razao_social || "")).toUpperCase(),
-        nome_fantasia: getField(row, ["Nome Parceiro", "Fantasia", "Nome Fantasia"], existing?.nome_fantasia || ""),
-        cpf_cnpj: rawCpfCnpj,
-        inscricao_estadual: getField(row, ["Insc. Estadual / Identidade", "Inscricao Estadual", "IE", "I.E."], existing?.inscricao_estadual || ""),
-        endereco: getField(row, ["Nome (Endereço)", "Endereço", "Endereco", "Rua", "Logradouro"], existing?.endereco || ""),
-        numero: String(getField(row, ["Número", "Numero"], existing?.numero || "")),
-        complemento: getField(row, ["Complemento"], existing?.complemento || ""),
-        bairro: getField(row, ["Nome (Bairro)", "Bairro"], existing?.bairro || ""),
-        cidade: String(getField(row, ["Cidade", "cidade"], existing?.cidade || parsedCidade)).toUpperCase(),
-        uf: String(getField(row, ["UF", "uf"], existing?.uf || parsedUf)).toUpperCase(),
-        cep: getField(row, ["CEP", "Cep"], existing?.cep || ""),
-        telefone: getField(row, ["Telefone"], existing?.telefone || ""),
-        celular: getField(row, ["Celular/Fax", "Celular", "Whatsapp", "WhatsApp"], existing?.celular || ""),
-        email: getField(row, ["Email", "E-mail"], existing?.email || "")
+        razao_social: String(extractField(row, ["Razão social", "Razao social", "Nome", "Cliente", "Razão Social", "Razao Social"], existing?.razao_social || "")).toUpperCase().substring(0, 250),
+        nome_fantasia: String(extractField(row, ["Nome Parceiro", "Fantasia", "Nome Fantasia"], existing?.nome_fantasia || "")).substring(0, 250),
+        cpf_cnpj: rawCpfCnpj ? String(rawCpfCnpj).substring(0, 20) : "",
+        inscricao_estadual: String(extractField(row, ["Insc. Estadual / Identidade", "Inscricao Estadual", "IE", "I.E."], existing?.inscricao_estadual || "")).substring(0, 30),
+        endereco: String(extractField(row, ["Nome (Endereço)", "Endereço", "Endereco", "Rua", "Logradouro"], existing?.endereco || "")).substring(0, 250),
+        numero: String(extractField(row, ["Número", "Numero"], existing?.numero || "")).substring(0, 20),
+        complemento: String(extractField(row, ["Complemento"], existing?.complemento || "")).substring(0, 100),
+        bairro: String(extractField(row, ["Nome (Bairro)", "Bairro"], existing?.bairro || "")).substring(0, 100),
+        cidade: String(extractField(row, ["Cidade", "cidade"], existing?.cidade || parsedCidade)).toUpperCase().substring(0, 100),
+        uf: cleanUf(extractField(row, ["UF", "uf"], existing?.uf || parsedUf), "RO"),
+        cep: String(extractField(row, ["CEP", "Cep"], existing?.cep || "")).substring(0, 10),
+        telefone: String(extractField(row, ["Telefone"], existing?.telefone || "")).substring(0, 20),
+        celular: String(extractField(row, ["Celular/Fax", "Celular", "Whatsapp", "WhatsApp"], existing?.celular || "")).substring(0, 20),
+        email: String(extractField(row, ["Email", "E-mail"], existing?.email || "")).substring(0, 100)
       };
 
       if (!mappedCliente.razao_social) {
-        failed++;
-        newLogs.push({ type: "error", msg: `Linha ${i + 2}: Pulada (Razão social vazia).` });
-        continue;
+        // Fallback: extract any string from row or use generic name instead of skipping
+        const anyVal = Object.values(row).find(v => v !== undefined && v !== null && String(v).trim() !== "");
+        mappedCliente.razao_social = anyVal ? String(anyVal).toUpperCase().trim() : `CLIENTE IMPORTADO ${i + 1}`;
       }
 
       // Match checking if not matched by ID
@@ -314,14 +366,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
     const newLogs: typeof importLogs = [];
 
     // Helper to extract fields from multiple potential columns
-    const getField = (rowObj: any, keys: string[], fallback: any) => {
-      for (const k of keys) {
-        if (k in rowObj && rowObj[k] !== undefined && rowObj[k] !== null) {
-          return rowObj[k];
-        }
-      }
-      return fallback;
-    };
+    
 
     // 2. Process rows
     for (let i = 0; i < json.length; i++) {
@@ -330,12 +375,23 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
       setImportCurrent(i + 1);
       setImportProgress(Math.round(((i + 1) / json.length) * 100));
 
-      const rawSerial = row["Número de Série"] || row["Numero de Serie"] || row["Série"] || row["Serie"] || row["Chassi"] || row["Nº Série"] || row["Nº de Série"] || row["No Serie"] || row["numero_serie"] || "";
+      // Normalize row keys for flexible lookup (case-insensitive, accent-insensitive, trimmed)
+      
+
+      const rawSerial = extractField(row, [
+        "Número de Série", "Numero de Serie", "Série", "Serie", "Chassi", 
+        "Nº Série", "Nº de Série", "No Serie", "numero_serie",
+        "Nro Serie", "Nro de Serie", "Num Serie", "Numero Serie", "Série / Chassi", "Serie / Chassi", "Série/Chassi", "Serie/Chassi",
+        "Chassi / Série", "Chassi / Serie", "Chassi/Série", "Chassi/Serie", "Num. Serie"
+      ], "");
       const cleanS = cleanSerial(rawSerial);
+
+      const rawModelo = extractField(row, ["Modelo", "modelo", "Descrição", "Descricao", "Equipamento", "Maquina", "Equip"], "");
+      const cleanM = cleanName(rawModelo);
 
       // Try to find existing by ID first
       let existing = null;
-      const rawId = row["ID"] || row["id"] || row["Id"] || row["Código"] || row["Codigo"] || row["Código Implemento"] || row["Codigo Implemento"] || "";
+      const rawId = extractField(row, ["ID", "id", "Id", "Código", "Codigo", "Código Implemento", "Codigo Implemento"], "");
       if (rawId && !isNaN(Number(rawId))) {
         existing = existingImplementos.find(imp => imp.id === Number(rawId));
       }
@@ -345,21 +401,30 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
         existing = implementosBySerial.get(cleanS);
       }
 
-      if (!existing && !cleanS) {
-        failed++;
-        newLogs.push({ type: "error", msg: `Linha ${i + 2}: Pulada (Número de Série não informado e nenhum ID correspondente fornecido).` });
-        continue;
+      // Fallback: match by Model and Manufacturer if not matched by ID or Serial
+      if (!existing && cleanM) {
+        const rawFab = String(extractField(row, ["Fabricante", "Marca", "fabricante"], "")).toUpperCase().trim();
+        existing = existingImplementos.find(imp => 
+          cleanName(imp.modelo) === cleanM && (!rawFab || imp.fabricante.toUpperCase().includes(rawFab) || rawFab.includes(imp.fabricante.toUpperCase()))
+        );
       }
 
-      const fabricante = String(getField(row, ["Fabricante", "Marca", "fabricante"], existing?.fabricante || "OUTROS")).toUpperCase();
-      const modelo = String(getField(row, ["Modelo", "modelo", "Descrição", "Descricao"], existing?.modelo || "IMPLEMENTO AVULSO")).toUpperCase();
-      const categoria = String(getField(row, ["Categoria", "Tipo", "categoria"], existing?.categoria || "Pulverizador"));
-      const anoVal = getField(row, ["Ano", "Ano Fabricação", "Ano Fabricacao", "ano"], existing?.ano);
+      if (!existing && !cleanS && !cleanM) {
+        // Fallback: use any available text from row or default name instead of skipping
+        const anyVal = Object.values(row).find(v => v !== undefined && v !== null && String(v).trim() !== "");
+        const fallbackName = anyVal ? String(anyVal).toUpperCase().trim() : `IMPLEMENTO ${i + 1}`;
+        // We will proceed to insert/update with this fallback name
+      }
+
+      const fabricante = String(extractField(row, ["Fabricante", "Marca", "fabricante"], existing?.fabricante || "OUTROS")).toUpperCase();
+      const modelo = String(extractField(row, ["Modelo", "modelo", "Descrição", "Descricao", "Equipamento", "Maquina", "Equip"], existing?.modelo || "IMPLEMENTO AVULSO")).toUpperCase();
+      const categoria = String(extractField(row, ["Categoria", "Tipo", "categoria"], existing?.categoria || "Pulverizador"));
+      const anoVal = extractField(row, ["Ano", "Ano Fabricação", "Ano Fabricacao", "ano"], existing?.ano);
       const ano = anoVal ? Number(anoVal) : undefined;
       
       // Parse date
       let dataEntrega = existing?.data_entrega;
-      const rawDate = getField(row, ["Data de Entrega", "Data Entrega", "Data", "data_entrega"], null);
+      const rawDate = extractField(row, ["Data de Entrega", "Data Entrega", "Data", "data_entrega"], null);
       if (rawDate) {
         try {
           if (typeof rawDate === "number") {
@@ -405,9 +470,9 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
         }
       }
 
-      const observacao = getField(row, ["Observação", "Obs", "observacao"], existing?.observacao || "");
+      const observacao = extractField(row, ["Observação", "Obs", "observacao"], existing?.observacao || "");
       
-      const rawAtivo = getField(row, ["Ativo"], null);
+      const rawAtivo = extractField(row, ["Ativo"], null);
       let isAtivo = true;
       if (rawAtivo !== null) {
         const strAtivo = String(rawAtivo).toUpperCase().trim();
@@ -419,9 +484,9 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
       // Try to associate with client only if client columns are specified
       let matchedCliente = null;
       
-      const clientSankhya = row["Cód. Parceiro"] || row["Cód Parceiro"] || row["Cod. Parceiro"] || row["Cod Parceiro"] || row["Cód. Proprietário"] || row["Cód. Cliente"] || row["Cód. Sankhya"] || row["Cód Sankhya"] || row["Cod Sankhya"] || row["Código Cliente"] || row["Codigo Cliente"] || row["Parceiro"] || row["Código Parceiro"] || row["Codigo Parceiro"] || "";
-      const clientCpfCnpj = row["CNPJ / CPF"] || row["CNPJ"] || row["CPF"] || row["CPF/CNPJ"] || row["Cpf/Cnpj"] || row["Cpf"] || row["Cnpj"] || "";
-      const clientName = row["Razão Social"] || row["Razao Social"] || row["Cliente"] || row["Proprietário"] || row["Proprietario"] || row["Nome"] || row["Nome Parceiro"] || row["Nome Cliente"] || "";
+      const clientSankhya = extractField(row, ["Cód. Parceiro", "Cód Parceiro", "Cod. Parceiro", "Cod Parceiro", "Cód. Proprietário", "Cód. Cliente", "Cód. Sankhya", "Cód Sankhya", "Cod Sankhya", "Código Cliente", "Codigo Cliente", "Parceiro", "Código Parceiro", "Codigo Parceiro"], "");
+      const clientCpfCnpj = extractField(row, ["CNPJ / CPF", "CNPJ", "CPF", "CPF/CNPJ", "Cpf/Cnpj", "Cpf", "Cnpj"], "");
+      const clientName = extractField(row, ["Razão Social", "Razao Social", "Cliente", "Proprietário", "Proprietario", "Nome", "Nome Parceiro", "Nome Cliente"], "");
 
       const hasClientInfo = !!(clientSankhya || clientCpfCnpj || clientName);
 
@@ -445,7 +510,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
               razao_social: String(clientName).toUpperCase(),
               cidade: "DESCONHECIDA",
               uf: "RO",
-              codigo_sankhya: searchSankhya || undefined,
+              codigo_sankhya: searchSankhya ? String(searchSankhya).substring(0, 20) : `IMP-${Date.now().toString(36).substring(0, 6).toUpperCase()}-${Math.floor(Math.random() * 899 + 100)}`,
               cpf_cnpj: searchCpf || undefined
             });
             
@@ -473,7 +538,8 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
               const defaultCli = await API.clientes.inserir({
                 razao_social: defaultName,
                 cidade: "DESCONHECIDA",
-                uf: "RO"
+                uf: "RO",
+                codigo_sankhya: `IMP-DEF-${Math.floor(Math.random() * 89999 + 10000)}`
               });
               matchedCliente = defaultCli;
               if (defaultCli.id) {
@@ -489,7 +555,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
       // Try to find a matching plan
       let plano_id = existing?.plano_id;
-      const colPlano = row["Plano de Manutenção"] || row["Plano de Manutencao"] || row["Plano"] || row["Plano ID"] || row["plano_id"] || "";
+      const colPlano = extractField(row, ["Plano de Manutenção", "Plano de Manutencao", "Plano", "Plano ID", "plano_id"], "");
       if (colPlano) {
         // Try to match by ID
         const foundPl = existingPlans.find(p => String(p.id) === String(colPlano).trim());
@@ -516,12 +582,17 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
         }
       }
 
+      let finalSerial = String(rawSerial || (existing ? existing.numero_serie : "")).toUpperCase().trim();
+      if (!finalSerial) {
+        finalSerial = `S/N-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      }
+
       const mappedImplemento: Implemento = {
         cliente_id: matchedCliente ? matchedCliente.id : (existing ? existing.cliente_id : undefined),
         fabricante,
         modelo,
         categoria,
-        numero_serie: String(rawSerial || (existing ? existing.numero_serie : "")).toUpperCase().trim(),
+        numero_serie: finalSerial,
         ano,
         data_entrega: dataEntrega,
         observacao,
@@ -556,6 +627,24 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
           }
         }
       } catch (rowErr: any) {
+        if (rowErr.code === "23505" || String(rowErr.message).includes("duplicate key")) {
+          // Retry with unique suffix
+          try {
+            mappedImplemento.numero_serie = `${mappedImplemento.numero_serie}-DUP-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+            const retriedImpl = await API.implementos.inserir(mappedImplemento);
+            if (retriedImpl.id && cleanS) {
+              implementosBySerial.set(cleanS, retriedImpl);
+            }
+            inserted++;
+            if (newLogs.length < 100) {
+              newLogs.push({ type: "create", msg: `Cadastrado (com série alterada devido a duplicata): ${fabricante} ${modelo} (Série: ${mappedImplemento.numero_serie})` });
+            }
+            continue; // Skip the outer catch error logging since it succeeded
+          } catch (retryErr: any) {
+            console.error(`Retry failed for row ${i}:`, retryErr);
+          }
+        }
+
         console.error(`Error processing implemento row ${i}:`, rowErr);
         failed++;
         if (newLogs.length < 100) {
@@ -619,14 +708,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
     let failed = 0;
     const newLogs: typeof importLogs = [];
 
-    const getField = (rowObj: any, keys: string[], fallback: any) => {
-      for (const k of keys) {
-        if (k in rowObj && rowObj[k] !== undefined && rowObj[k] !== null) {
-          return rowObj[k];
-        }
-      }
-      return fallback;
-    };
+    
 
     const parseDateVal = (val: any) => {
       if (!val) return undefined;
@@ -681,6 +763,8 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
       setImportCurrent(i + 1);
       setImportProgress(Math.round(((i + 1) / json.length) * 100));
 
+      
+
       // 1. Identify existing OS
       let existing: any = null;
       const rawId = row["ID"] || row["id"] || row["Id"] || "";
@@ -688,7 +772,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
         existing = existingOS.find(o => o.id === Number(rawId));
       }
 
-      const rawNumOs = row["Nº O.S."] || row["Nº OS"] || row["OS"] || row["No OS"] || row["numero_os"] || row["Número OS"] || row["Número da OS"] || "";
+      const rawNumOs = extractField(row, ["Nº O.S.", "Nº OS", "OS", "No OS", "numero_os", "Número OS", "Número da OS", "Num OS", "Nro OS"], "");
       const cleanNumOs = String(rawNumOs).toUpperCase().trim();
       if (!existing && cleanNumOs) {
         existing = osByNumber.get(cleanNumOs);
@@ -696,9 +780,9 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
       // 2. Resolve or Create Client
       let resolvedCliente = null;
-      const clientSankhya = row["Cód. Parceiro"] || row["Cód Parceiro"] || row["Cod. Parceiro"] || row["Cod Parceiro"] || row["Cód. Proprietário"] || row["Cód. Cliente"] || row["Cód. Sankhya"] || row["Cód Sankhya"] || row["Cod Sankhya"] || row["Código Cliente"] || row["Codigo Cliente"] || row["Parceiro"] || row["Código Parceiro"] || row["Codigo Parceiro"] || "";
-      const clientCpfCnpj = row["CNPJ / CPF"] || row["CNPJ"] || row["CPF"] || row["CPF/CNPJ"] || row["Cpf/Cnpj"] || row["Cpf"] || row["Cnpj"] || "";
-      const clientName = row["Razão Social"] || row["Razao Social"] || row["Cliente"] || row["Proprietário"] || row["Proprietario"] || row["Nome"] || row["Nome Parceiro"] || row["Nome Cliente"] || "";
+      const clientSankhya = extractField(row, ["Cód. Parceiro", "Cód Parceiro", "Cod. Parceiro", "Cod Parceiro", "Cód. Proprietário", "Cód. Cliente", "Cód. Sankhya", "Cód Sankhya", "Cod Sankhya", "Código Cliente", "Codigo Cliente", "Parceiro", "Código Parceiro", "Codigo Parceiro"], "");
+      const clientCpfCnpj = extractField(row, ["CNPJ / CPF", "CNPJ", "CPF", "CPF/CNPJ", "Cpf/Cnpj", "Cpf", "Cnpj"], "");
+      const clientName = extractField(row, ["Razão Social", "Razao Social", "Cliente", "Proprietário", "Proprietario", "Nome", "Nome Parceiro", "Nome Cliente"], "");
 
       const searchSankhya = clientSankhya ? String(clientSankhya).trim() : "";
       const searchCpf = cleanCpfCnpj(clientCpfCnpj);
@@ -718,7 +802,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
             razao_social: String(clientName).toUpperCase(),
             cidade: "DESCONHECIDA",
             uf: "RO",
-            codigo_sankhya: searchSankhya || undefined,
+            codigo_sankhya: searchSankhya ? String(searchSankhya).substring(0, 20) : `IMP-${Date.now().toString(36).substring(0, 6).toUpperCase()}-${Math.floor(Math.random() * 899 + 100)}`,
             cpf_cnpj: searchCpf || undefined
           });
           if (resolvedCliente.id) {
@@ -746,7 +830,8 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
             resolvedCliente = await API.clientes.inserir({
               razao_social: defaultName,
               cidade: "DESCONHECIDA",
-              uf: "RO"
+              uf: "RO",
+              codigo_sankhya: `IMP-DEF-${Math.floor(Math.random() * 89999 + 10000)}`
             });
             if (resolvedCliente.id) {
               clientsByName.set(cleanDefault, resolvedCliente);
@@ -761,31 +846,49 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
       // 3. Resolve or Create Implemento
       let resolvedImplemento = null;
-      const rawSerial = row["Número de Série"] || row["Numero de Serie"] || row["Série"] || row["Serie"] || row["Chassi"] || row["Nº Série"] || row["Nº de Série"] || row["No Serie"] || row["numero_serie"] || "";
+      const rawSerial = extractField(row, [
+        "Número de Série", "Numero de Serie", "Série", "Serie", "Chassi", 
+        "Nº Série", "Nº de Série", "No Serie", "numero_serie",
+        "Nro Serie", "Nro de Serie", "Num Serie", "Numero Serie", "Série / Chassi", "Serie / Chassi", "Série/Chassi", "Serie/Chassi",
+        "Chassi / Série", "Chassi / Serie", "Chassi/Série", "Chassi/Serie", "Num. Serie"
+      ], "");
       const cleanS = cleanSerial(rawSerial);
+
+      const rawModelo = extractField(row, ["Modelo", "modelo", "Descrição", "Descricao", "Equipamento", "Maquina", "Equip"], "");
+      const cleanM = cleanName(rawModelo);
+      const rawFab = String(extractField(row, ["Fabricante", "Marca", "fabricante"], "OUTROS")).toUpperCase();
+      const rawCat = String(extractField(row, ["Categoria", "Tipo", "categoria"], "Pulverizador"));
 
       if (cleanS && implementosBySerial.has(cleanS)) {
         resolvedImplemento = implementosBySerial.get(cleanS);
       }
 
-      if (!resolvedImplemento && cleanS) {
-        const fabricante = String(getField(row, ["Fabricante", "Marca", "fabricante"], "OUTROS")).toUpperCase();
-        const modelo = String(getField(row, ["Modelo", "modelo", "Descrição", "Descricao"], "IMPLEMENTO IMPORTADO")).toUpperCase();
-        const categoria = String(getField(row, ["Categoria", "Tipo", "categoria"], "Pulverizador"));
+      if (!resolvedImplemento && cleanM) {
+        resolvedImplemento = existingImplementos.find(imp => 
+          cleanName(imp.modelo) === cleanM && (!rawFab || imp.fabricante.toUpperCase().includes(rawFab) || rawFab.includes(imp.fabricante.toUpperCase()))
+        );
+      }
+
+      if (!resolvedImplemento && cleanM) {
+        resolvedImplemento = existingImplementos.find(imp => cleanName(imp.modelo) === cleanM);
+      }
+
+      if (!resolvedImplemento && (cleanS || cleanM)) {
         try {
           resolvedImplemento = await API.implementos.inserir({
             cliente_id,
-            fabricante,
-            modelo,
-            categoria,
-            numero_serie: String(rawSerial).toUpperCase().trim(),
+            fabricante: rawFab || "OUTROS",
+            modelo: String(rawModelo || "IMPLEMENTO OS").toUpperCase(),
+            categoria: rawCat,
+            numero_serie: String(rawSerial || `S/N-OS-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`).toUpperCase().trim(),
             ativo: true
           });
           if (resolvedImplemento.id) {
-            implementosBySerial.set(cleanS, resolvedImplemento);
+            existingImplementos.push(resolvedImplemento);
+            if (cleanS) implementosBySerial.set(cleanS, resolvedImplemento);
           }
-          newLogs.push({ type: "create", msg: `Implemento criado p/ O.S.: ${fabricante} ${modelo} (Série: ${rawSerial})` });
-        } catch (err) {
+          newLogs.push({ type: "create", msg: `Implemento criado p/ O.S.: ${rawFab} ${rawModelo} (Série: ${rawSerial})` });
+        } catch (err: any) {
           console.error("Error creating implemento for OS:", err);
         }
       }
@@ -825,7 +928,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
       // 4. Resolve Technician
       let tecnico_id = existing?.tecnico_id;
-      const rawTecName = row["Técnico"] || row["Tecnico"] || row["tecnico"] || row["Responsável"] || row["Responsavel"] || "";
+      const rawTecName = extractField(row, ["Técnico", "Tecnico", "tecnico", "Responsável", "Responsavel"], "");
       if (rawTecName) {
         const cleanTec = cleanName(rawTecName);
         if (tecnicosByName.has(cleanTec)) {
@@ -835,7 +938,7 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
 
       // 5. Resolve Auxiliar
       let auxiliar_id = existing?.auxiliar_id;
-      const rawAuxName = row["Auxiliar"] || row["auxiliar"] || "";
+      const rawAuxName = extractField(row, ["Auxiliar", "auxiliar"], "");
       if (rawAuxName) {
         const cleanAux = cleanName(rawAuxName);
         if (tecnicosByName.has(cleanAux)) {
@@ -844,23 +947,28 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
       }
 
       // 6. Map Other Fields
-      const rawStatus = String(row["Status"] || row["status"] || row["Situação"] || row["Situacao"] || "ABERTA").toUpperCase().trim();
+      const rawStatus = String(extractField(row, ["Status", "status", "Situação", "Situacao"], "ABERTA")).toUpperCase().trim();
       let mappedStatus: OrdemServico["status"] = "ABERTA";
       if (["ABERTA", "EM ATENDIMENTO", "AGENDADA", "AGUARDANDO", "FINALIZADA", "CANCELADA"].includes(rawStatus)) {
         mappedStatus = rawStatus as any;
       }
 
-      const rawPrioridade = String(row["Prioridade"] || row["prioridade"] || "NORMAL").toUpperCase().trim();
+      const rawPrioridade = String(extractField(row, ["Prioridade", "prioridade"], "NORMAL")).toUpperCase().trim();
       let mappedPrioridade: OrdemServico["prioridade"] = "NORMAL";
       if (["NORMAL", "ALTA", "URGENTE"].includes(rawPrioridade)) {
         mappedPrioridade = rawPrioridade as any;
       }
 
-      const data_abertura = parseDateVal(row["Data Abertura"] || row["Data de Abertura"] || row["Abertura"] || row["data_abertura"]) || existing?.data_abertura || new Date().toISOString().split("T")[0];
-      const data_encerramento = parseDateVal(row["Data Encerramento"] || row["Data de Encerramento"] || row["Encerramento"] || row["data_encerramento"]) || existing?.data_encerramento;
-      const data_atendimento = parseDateVal(row["Data Atendimento"] || row["Data do Atendimento"] || row["data_atendimento"]) || existing?.data_atendimento;
-      const data_termino = parseDateVal(row["Data Término"] || row["Data Termino"] || row["data_termino"]) || existing?.data_termino;
+      const data_abertura = parseDateVal(extractField(row, ["Data Abertura", "Data de Abertura", "Abertura", "data_abertura"], null)) || existing?.data_abertura || new Date().toISOString().split("T")[0];
+      const data_encerramento = parseDateVal(extractField(row, ["Data Encerramento", "Data de Encerramento", "Encerramento", "data_encerramento"], null)) || existing?.data_encerramento;
+      const data_atendimento = parseDateVal(extractField(row, ["Data Atendimento", "Data do Atendimento", "data_atendimento"], null)) || existing?.data_atendimento;
+      const data_termino = parseDateVal(extractField(row, ["Data Término", "Data Termino", "data_termino"], null)) || existing?.data_termino;
 
+      const parseNumVal = (v: any, fallback: any) => {
+        if (v === "" || v === null || v === undefined) return fallback;
+        const n = Number(String(v).replace(",", "."));
+        return isNaN(n) ? fallback : n;
+      };
       const mappedOS: OrdemServico = {
         numero_os: existing ? existing.numero_os : (cleanNumOs || `OS${String(existingOS.length + inserted + 1).padStart(6, "0")}`),
         status: mappedStatus,
@@ -868,29 +976,29 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
         implemento_id,
         data_abertura,
         data_encerramento,
-        tipo_atendimento: String(row["Tipo de Atendimento"] || row["Tipo Atendimento"] || row["tipo_atendimento"] || existing?.tipo_atendimento || "ASSISTÊNCIA TÉCNICA").toUpperCase(),
+        tipo_atendimento: String(extractField(row, ["Tipo de Atendimento", "Tipo Atendimento", "tipo_atendimento"], existing?.tipo_atendimento || "ASSISTÊNCIA TÉCNICA")).toUpperCase(),
         prioridade: mappedPrioridade,
-        reclamacao: String(row["Reclamação"] || row["Reclamacao"] || row["Sintomas"] || existing?.reclamacao || "Importado do Excel"),
-        observacao: String(row["Observação"] || row["Observacao"] || row["Obs"] || existing?.observacao || ""),
-        solicitante: String(row["Solicitante"] || existing?.solicitante || ""),
+        reclamacao: String(extractField(row, ["Reclamação", "Reclamacao", "Sintomas", "Problema"], existing?.reclamacao || "Importado do Excel")),
+        observacao: String(extractField(row, ["Observação", "Observacao", "Obs"], existing?.observacao || "")),
+        solicitante: String(extractField(row, ["Solicitante", "Contato"], existing?.solicitante || "")),
         tecnico_id,
         auxiliar_id,
         data_atendimento,
         data_termino,
-        hora_inicial: String(row["Hora Inicial"] || row["Hora Inicial"] || existing?.hora_inicial || ""),
-        hora_final: String(row["Hora Final"] || row["Hora Final"] || existing?.hora_final || ""),
-        servico_executado: String(row["Serviço Executado"] || row["Servico Executado"] || row["Trabalho Executado"] || existing?.servico_executado || ""),
-        km_rodado_total: row["Km Rodado"] !== undefined ? Number(row["Km Rodado"]) : existing?.km_rodado_total,
-        km_inicial: row["Km Inicial"] !== undefined ? Number(row["Km Inicial"]) : existing?.km_inicial,
-        km_final: row["Km Final"] !== undefined ? Number(row["Km Final"]) : existing?.km_final,
-        valor_km_unitario: row["Valor Km"] !== undefined ? Number(row["Valor Km"]) : existing?.valor_km_unitario,
-        valor_hora_unitario: row["Valor Hora"] !== undefined ? Number(row["Valor Hora"]) : existing?.valor_hora_unitario,
-        veiculo_usado: String(row["Veículo Usado"] || row["Veiculo Usado"] || existing?.veiculo_usado || ""),
-        valor_deslocamento: row["Valor Deslocamento"] !== undefined ? Number(row["Valor Deslocamento"]) : existing?.valor_deslocamento,
-        valor_mao_obra: row["Valor Mão de Obra"] !== undefined ? Number(row["Valor Mão de Obra"]) : existing?.valor_mao_obra,
-        valor_terceiros: row["Valor Terceiros"] !== undefined ? Number(row["Valor Terceiros"]) : existing?.valor_terceiros,
-        nota_fiscal: String(row["Nota Fiscal"] || row["NF"] || existing?.nota_fiscal || ""),
-        valor_total: row["Valor Total"] !== undefined ? Number(row["Valor Total"]) : existing?.valor_total
+        hora_inicial: String(extractField(row, ["Hora Inicial", "Hora Inicio", "hora_inicial"], existing?.hora_inicial || "")),
+        hora_final: String(extractField(row, ["Hora Final", "Hora Fim", "hora_final"], existing?.hora_final || "")),
+        servico_executado: String(extractField(row, ["Serviço Executado", "Servico Executado", "Trabalho Executado", "Laudo"], existing?.servico_executado || "")),
+        km_rodado_total: parseNumVal(extractField(row, ["Km Rodado", "KM Rodado", "Km Total", "km_rodado_total"], null), existing?.km_rodado_total),
+        km_inicial: parseNumVal(extractField(row, ["Km Inicial", "KM Inicial", "km_inicial"], null), existing?.km_inicial),
+        km_final: parseNumVal(extractField(row, ["Km Final", "KM Final", "km_final"], null), existing?.km_final),
+        valor_km_unitario: parseNumVal(extractField(row, ["Valor Km", "Valor KM", "valor_km_unitario"], null), existing?.valor_km_unitario),
+        valor_hora_unitario: parseNumVal(extractField(row, ["Valor Hora", "valor_hora_unitario"], null), existing?.valor_hora_unitario),
+        veiculo_usado: String(extractField(row, ["Veículo Usado", "Veiculo Usado", "Veículo", "Veiculo"], existing?.veiculo_usado || "")),
+        valor_deslocamento: parseNumVal(extractField(row, ["Valor Deslocamento", "valor_deslocamento"], null), existing?.valor_deslocamento),
+        valor_mao_obra: parseNumVal(extractField(row, ["Valor Mão de Obra", "Valor Mao de Obra", "valor_mao_obra"], null), existing?.valor_mao_obra),
+        valor_terceiros: parseNumVal(extractField(row, ["Valor Terceiros", "valor_terceiros"], null), existing?.valor_terceiros),
+        nota_fiscal: String(extractField(row, ["Nota Fiscal", "NF", "nota_fiscal"], existing?.nota_fiscal || "")),
+        valor_total: parseNumVal(extractField(row, ["Valor Total", "valor_total", "Valor OS"], null), existing?.valor_total)
       };
 
       try {
@@ -1151,20 +1259,70 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
                     )}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={
-                    activeImporterTab === "clientes" 
-                      ? downloadClientesTemplate 
-                      : activeImporterTab === "implementos" 
-                      ? downloadImplementosTemplate 
-                      : downloadOrdensServicoTemplate
-                  }
-                  className="shrink-0 flex items-center gap-1 bg-white border border-gray-200 hover:border-gray-300 text-[10px] font-bold text-gray-700 py-1.5 px-2.5 rounded shadow-sm hover:bg-gray-50 transition-colors"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-brand-red" />
-                  Modelo .xlsx
-                </button>
+                <div className="flex items-center gap-2">
+                  {activeImporterTab === "clientes" && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm("ATENÇÃO: Deseja realmente excluir TODOS os cadastros de clientes do banco de dados para uma nova importação limpa?")) {
+                          setImporting(true);
+                          try {
+                            await API.clientes.excluirTodos();
+                            showToast("Todos os clientes foram excluídos com sucesso. Banco limpo para nova importação!", "success");
+                            if (onRefresh) await onRefresh();
+                          } catch (err) {
+                            console.error(err);
+                            showToast("Erro ao limpar clientes do banco.", "error");
+                          } finally {
+                            setImporting(false);
+                          }
+                        }
+                      }}
+                      className="shrink-0 flex items-center gap-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-[10px] font-bold text-rose-700 py-1.5 px-2.5 rounded shadow-sm transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      Limpar Clientes
+                    </button>
+                  )}
+                  {activeImporterTab === "implementos" && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm("ATENÇÃO: Deseja realmente excluir TODOS os cadastros de implementos do banco de dados para uma nova importação limpa?")) {
+                          setImporting(true);
+                          try {
+                            await API.implementos.excluirTodos();
+                            showToast("Todos os implementos foram excluídos com sucesso. Banco limpo para nova importação!", "success");
+                            if (onRefresh) await onRefresh();
+                          } catch (err) {
+                            console.error(err);
+                            showToast("Erro ao limpar implementos do banco.", "error");
+                          } finally {
+                            setImporting(false);
+                          }
+                        }
+                      }}
+                      className="shrink-0 flex items-center gap-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-[10px] font-bold text-rose-700 py-1.5 px-2.5 rounded shadow-sm transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      Limpar Implementos
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={
+                      activeImporterTab === "clientes" 
+                        ? downloadClientesTemplate 
+                        : activeImporterTab === "implementos" 
+                        ? downloadImplementosTemplate 
+                        : downloadOrdensServicoTemplate
+                    }
+                    className="shrink-0 flex items-center gap-1 bg-white border border-gray-200 hover:border-gray-300 text-[10px] font-bold text-gray-700 py-1.5 px-2.5 rounded shadow-sm hover:bg-gray-50 transition-colors"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-brand-red" />
+                    Modelo .xlsx
+                  </button>
+                </div>
               </div>
             </div>
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
+import React, { useState } from "react";
 import { motion } from "motion/react";
 import { 
   Users, 
@@ -19,9 +19,12 @@ import {
   ChevronRight,
   ShieldAlert,
   Activity,
-  Briefcase
+  Briefcase,
+  ListFilter
 } from "lucide-react";
 import { Cliente, Implemento, OrdemServico, Tecnico } from "../types";
+import { getRevisionAlerts } from "../lib/revisionAlerts";
+import { RevisoesAlertsModal } from "./RevisoesAlertsModal";
 
 interface DashboardViewProps {
   clientes: Cliente[];
@@ -64,6 +67,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Filter latest orders (up to 5)
   const ultimasOS = ordens.slice(0, 5);
 
+  // Calculate preventive maintenance revision alerts
+  const [revisoesModalOpen, setRevisoesModalOpen] = useState(false);
+  const revisionAlerts = getRevisionAlerts(implementos, ordens, clientes);
+  const overdueCount = revisionAlerts.filter(a => a.status === "ATRASADA").length;
+  const upcomingCount = revisionAlerts.filter(a => a.status === "PROXIMA").length;
+
   const containerVariants = {
     hidden: { opacity: 0 },
     show: {
@@ -96,7 +105,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Métricas operacionais de campo, faturamento de ordens de serviço e frota monitorada.
           </p>
         </div>
-
       </div>
 
       {/* Main KPI counters */}
@@ -418,6 +426,82 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Alert Banner Widget: Revisões Preventivas Pendentes / Próximas */}
+      {revisionAlerts.length > 0 ? (
+        <motion.div 
+          variants={itemVariants}
+          className={`bg-white rounded-2xl p-5 shadow-xs border relative overflow-hidden flex flex-col lg:flex-row lg:items-center justify-between gap-5 ${
+            overdueCount > 0 ? "border-rose-200 bg-rose-50/40" : "border-amber-200 bg-amber-50/30"
+          }`}
+        >
+          <div className="flex items-start gap-4">
+            <div className={`p-3 rounded-2xl shrink-0 mt-0.5 border ${
+              overdueCount > 0 
+                ? "bg-rose-100 text-rose-700 border-rose-200" 
+                : "bg-amber-100 text-amber-800 border-amber-200"
+            }`}>
+              <ShieldAlert className="w-7 h-7 animate-pulse" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-display font-extrabold text-lg uppercase tracking-wide text-gray-900">
+                  Alertas de Revisão Preventiva
+                </h3>
+                {overdueCount > 0 && (
+                  <span className="px-2.5 py-0.5 bg-rose-600 text-white rounded-full text-[10px] font-black uppercase tracking-wider shadow-xs">
+                    ⚠️ {overdueCount} {overdueCount === 1 ? "Vencida" : "Vencidas"}
+                  </span>
+                )}
+                {upcomingCount > 0 && (
+                  <span className="px-2.5 py-0.5 bg-amber-500 text-white rounded-full text-[10px] font-black uppercase tracking-wider shadow-xs">
+                    🔔 {upcomingCount} {upcomingCount === 1 ? "Próxima" : "Próximas"} (&lt;50h)
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-600 font-medium max-w-2xl">
+                Existem máquinas na frota que atingiram ou estão próximas do limite de horímetro previsto nos planos de manutenção preventiva.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={() => setRevisoesModalOpen(true)}
+              className="px-4 py-2.5 bg-brand-red hover:bg-brand-red-dark text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-xs transition-all hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <ListFilter className="w-4 h-4" />
+              Ver Lista de Revisões ({revisionAlerts.length})
+            </button>
+          </div>
+        </motion.div>
+      ) : (
+        <motion.div 
+          variants={itemVariants}
+          className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-950 rounded-2xl p-4 flex items-center justify-between gap-4 text-xs font-medium"
+        >
+          <div className="flex items-center gap-3">
+            <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+            <span>
+              <strong className="font-extrabold text-emerald-900 uppercase">Manutenção Preventiva em Dia:</strong> Nenhuma revisão por horímetro está pendente ou próxima do limite no momento.
+            </span>
+          </div>
+          <button
+            onClick={() => setRevisoesModalOpen(true)}
+            className="text-xs font-bold text-emerald-700 hover:underline uppercase tracking-wider shrink-0"
+          >
+            Ver Frota Monitorada
+          </button>
+        </motion.div>
+      )}
+
+      {/* Revision Alerts Modal */}
+      <RevisoesAlertsModal 
+        isOpen={revisoesModalOpen}
+        onClose={() => setRevisoesModalOpen(false)}
+        alerts={revisionAlerts}
+        onNavigate={onNavigate}
+      />
     </motion.div>
   );
 };

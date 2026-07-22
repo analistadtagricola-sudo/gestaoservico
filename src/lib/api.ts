@@ -1,3 +1,80 @@
+
+function cleanUf(raw: any, fallback = "RO"): string {
+  if (!raw) return fallback;
+  const s = String(raw).toUpperCase().trim();
+  if (s.includes("ROND")) return "RO";
+  if (s.includes("ACRE")) return "AC";
+  if (s.includes("AMAZON")) return "AM";
+  if (s.includes("MATO GROSSO DO SUL")) return "MS";
+  if (s.includes("MATO GROSSO")) return "MT";
+  if (s.includes("PARAN")) return "PR";
+  if (s.includes("SÃO PAULO") || s.includes("SAO PAULO")) return "SP";
+  if (s.includes("MINAS")) return "MG";
+  if (s.includes("GOI")) return "GO";
+  const match = s.match(/\b([A-Z]{2})\b/);
+  if (match) return match[1];
+  return s.substring(0, 2) || fallback;
+}
+
+function cleanTipoPessoa(raw: any, cpfCnpjStr: string, fallback: "F" | "J" = "F"): "F" | "J" {
+  if (raw) {
+    const s = String(raw).toUpperCase().trim();
+    if (s.startsWith("J") || s.includes("PJ") || s.includes("JURID")) return "J";
+    if (s.startsWith("F") || s.includes("PF") || s.includes("FISIC") || s.includes("FÍSIC")) return "F";
+  }
+  const digits = String(cpfCnpjStr || "").replace(/\D/g, "");
+  if (digits.length > 11) return "J";
+  if (digits.length > 0) return "F";
+  return fallback;
+}
+
+function cleanTimeVal(v: any): string | null {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) {
+    const parts = s.split(":");
+    const h = parts[0].padStart(2, "0");
+    const m = parts[1].padStart(2, "0");
+    const sec = parts[2] ? parts[2].padStart(2, "0") : "00";
+    return `${h}:${m}:${sec}`;
+  }
+  return null;
+}
+
+function sanitizeClientePayload(c: any): any {
+  const cpfCnpj = c.cpf_cnpj ? String(c.cpf_cnpj).trim().substring(0, 20) : "";
+  let codSankhya = c.codigo_sankhya ? String(c.codigo_sankhya).trim().substring(0, 20) : "";
+  if (!codSankhya) {
+    codSankhya = `IMP-${Date.now().toString(36).substring(0, 6).toUpperCase()}-${Math.floor(Math.random() * 899 + 100)}`;
+  }
+
+  const payload: any = {
+    codigo_sankhya: codSankhya,
+    tipo_pessoa: cleanTipoPessoa(c.tipo_pessoa, cpfCnpj, "F"),
+    ativo: c.ativo !== false,
+    razao_social: String(c.razao_social || "CLIENTE SEM NOME").toUpperCase().trim().substring(0, 250),
+    nome_fantasia: c.nome_fantasia ? String(c.nome_fantasia).trim().substring(0, 250) : "",
+    cpf_cnpj: cpfCnpj,
+    inscricao_estadual: c.inscricao_estadual ? String(c.inscricao_estadual).trim().substring(0, 30) : "",
+    endereco: c.endereco ? String(c.endereco).trim().substring(0, 250) : "",
+    numero: c.numero ? String(c.numero).trim().substring(0, 20) : "",
+    complemento: c.complemento ? String(c.complemento).trim().substring(0, 100) : "",
+    bairro: c.bairro ? String(c.bairro).trim().substring(0, 100) : "",
+    cidade: String(c.cidade || "DESCONHECIDA").toUpperCase().trim().substring(0, 100),
+    uf: cleanUf(c.uf, "RO"),
+    cep: c.cep ? String(c.cep).trim().substring(0, 10) : "",
+    telefone: c.telefone ? String(c.telefone).trim().substring(0, 20) : "",
+    celular: c.celular ? String(c.celular).trim().substring(0, 20) : "",
+    email: c.email ? String(c.email).trim().substring(0, 100) : ""
+  };
+
+  if (c.observacao) {
+    payload.observacao = String(c.observacao).trim().substring(0, 500);
+  }
+
+  return payload;
+}
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -126,28 +203,35 @@ export const API = {
   clientes: {
     async listar(): Promise<Cliente[]> {
       try {
-        const { data, error } = await supabase
-          .from("clientes")
-          .select("*")
-          .order("razao_social");
-        if (error) throw error;
-        
-        const saved = localStorage.getItem("gst_clientes");
-        if (saved) {
-          const localList: Cliente[] = JSON.parse(saved);
-          const supabaseIds = new Set((data || []).map(c => c.id));
-          const localOnly = localList.filter(c => !supabaseIds.has(c.id));
-          const merged = [...(data || []), ...localOnly];
-          localStorage.setItem("gst_clientes", JSON.stringify(merged));
-          return merged.sort((a, b) => (a.razao_social || "").localeCompare(b.razao_social || ""));
+        let allData: Cliente[] = [];
+        let hasMore = true;
+        let start = 0;
+        const step = 1000;
+
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from("clientes")
+            .select("*")
+            .order("razao_social")
+            .range(start, start + step - 1);
+          
+          if (error) throw error;
+          
+          if (data && data.length > 0) {
+            allData = [...allData, ...data];
+            start += step;
+            if (data.length < step) {
+              hasMore = false;
+            }
+          } else {
+            hasMore = false;
+          }
         }
-        localStorage.setItem("gst_clientes", JSON.stringify(data || []));
-        return data || [];
+        
+        return allData;
       } catch (err) {
-        console.warn("Falling back to simulated clients...");
-        const saved = localStorage.getItem("gst_clientes");
-        if (saved) return JSON.parse(saved);
-        return [];
+        console.error("ERRO SUPABASE LISTAR CLIENTES:", err);
+        throw err;
       }
     },
 
@@ -161,44 +245,41 @@ export const API = {
         if (error) throw error;
         return data;
       } catch (err) {
-        const list = await this.listar();
-        return list.find(c => c.id === id) || null;
+        console.error("ERRO SUPABASE BUSCAR CLIENTE:", err);
+        throw err;
       }
     },
 
     async inserir(cliente: Cliente): Promise<Cliente> {
       try {
+        const payload = sanitizeClientePayload(cliente);
         const { data, error } = await supabase
           .from("clientes")
-          .insert(cliente)
+          .insert(payload)
           .select()
           .single();
         if (error) throw error;
         return data;
       } catch (err) {
-        const list = await this.listar();
-        const nextId = list.reduce((max, c) => Math.max(max, c.id || 0), 0) + 1;
-        const newCliente = { ...cliente, id: nextId, created_at: new Date().toISOString() };
-        localStorage.setItem("gst_clientes", JSON.stringify([...list, newCliente]));
-        return newCliente;
+        console.error("ERRO SUPABASE INSERT CLIENTE:", err);
+        throw err;
       }
     },
 
     async atualizar(id: number, cliente: Cliente): Promise<Cliente> {
       try {
+        const payload = sanitizeClientePayload({ ...cliente, id });
         const { data, error } = await supabase
           .from("clientes")
-          .update(cliente)
+          .update(payload)
           .eq("id", id)
           .select()
           .single();
         if (error) throw error;
         return data;
       } catch (err) {
-        const list = await this.listar();
-        const updated = list.map(c => c.id === id ? { ...c, ...cliente, id } : c);
-        localStorage.setItem("gst_clientes", JSON.stringify(updated));
-        return { ...cliente, id };
+        console.error("ERRO SUPABASE UPDATE CLIENTE:", err);
+        throw err;
       }
     },
 
@@ -211,10 +292,22 @@ export const API = {
         if (error) throw error;
         return true;
       } catch (err) {
-        const list = await this.listar();
-        const filtered = list.filter(c => c.id !== id);
-        localStorage.setItem("gst_clientes", JSON.stringify(filtered));
+        console.error("ERRO SUPABASE EXCLUIR CLIENTE:", err);
+        throw err;
+      }
+    },
+
+    async excluirTodos(): Promise<boolean> {
+      try {
+        const { error } = await supabase
+          .from("clientes")
+          .delete()
+          .neq("id", -999999);
+        if (error) throw error;
         return true;
+      } catch (err) {
+        console.error("ERRO SUPABASE EXCLUIR TODOS CLIENTES:", err);
+        throw err;
       }
     },
 
@@ -228,8 +321,8 @@ export const API = {
         if (error) throw error;
         return data;
       } catch (err) {
-        const list = await this.listar();
-        return list.find(c => c.codigo_sankhya === codigo) || null;
+        console.error("ERRO SUPABASE BUSCAR_CODIGO CLIENTE:", err);
+        throw err;
       }
     }
   },
@@ -241,56 +334,91 @@ export const API = {
         let relationError = false;
 
         // Try to fetch with relation join first
-        let query = supabase
-          .from("implementos")
-          .select(`
-            *,
-            clientes (
-              id,
-              razao_social,
-              cidade,
-              uf
-            )
-          `);
-        
-        // Use a safer ordering
-        try {
-          query = query.order("id", { ascending: false });
-        } catch (e) {
-          console.warn("Could not order by id, continuing...");
-        }
+        let allDataWithRelation: any[] = [];
+        let hasMoreWithRelation = true;
+        let startRel = 0;
+        const step = 1000;
 
-        const { data, error } = await query;
-
-        if (error) {
-          if (error.code === "PGRST200" || error.message?.includes("relationship") || error.message?.includes("foreign key")) {
-            relationError = true;
-          } else {
-            throw error;
+        while (hasMoreWithRelation) {
+          let query = supabase
+            .from("implementos")
+            .select(`
+              *,
+              clientes (
+                id,
+                razao_social,
+                cidade,
+                uf
+              )
+            `)
+            .range(startRel, startRel + step - 1);
+          
+          try {
+            query = query.order("id", { ascending: false });
+          } catch (e) {
+            console.warn("Could not order by id, continuing...");
           }
-        } else {
-          rawData = data || [];
+
+          const { data, error } = await query;
+
+          if (error) {
+            if (error.code === "PGRST200" || error.message?.includes("relationship") || error.message?.includes("foreign key")) {
+              relationError = true;
+              hasMoreWithRelation = false;
+              allDataWithRelation = [];
+            } else {
+              throw error;
+            }
+          } else {
+            if (data && data.length > 0) {
+              allDataWithRelation = [...allDataWithRelation, ...data];
+              startRel += step;
+              if (data.length < step) {
+                hasMoreWithRelation = false;
+              }
+            } else {
+              hasMoreWithRelation = false;
+            }
+          }
+        }
+        
+        if (!relationError) {
+          rawData = allDataWithRelation;
         }
 
         if (relationError) {
-          // Fetch implementos separately
-          const { data: impls, error: implsErr } = await supabase
-            .from("implementos")
-            .select("*")
-            .order("id", { ascending: false });
-          if (implsErr) throw implsErr;
-
-          // Fetch all clients to map in-memory
-          const { data: clis, error: clisErr } = await supabase
-            .from("clientes")
-            .select("id, razao_social, cidade, uf");
+          // Fetch implementos separately with pagination
+          let allImpls: any[] = [];
+          let hasMoreImpls = true;
+          let startImpl = 0;
           
-          const clisMap = new Map<number, any>();
-          if (!clisErr && clis) {
-            clis.forEach(c => clisMap.set(c.id, c));
+          while (hasMoreImpls) {
+            const { data: impls, error: implsErr } = await supabase
+              .from("implementos")
+              .select("*")
+              .order("id", { ascending: false })
+              .range(startImpl, startImpl + step - 1);
+              
+            if (implsErr) throw implsErr;
+            
+            if (impls && impls.length > 0) {
+              allImpls = [...allImpls, ...impls];
+              startImpl += step;
+              if (impls.length < step) {
+                hasMoreImpls = false;
+              }
+            } else {
+              hasMoreImpls = false;
+            }
           }
 
-          rawData = (impls || []).map((impl: any) => ({
+          // Fetch all clients to map in-memory
+          const clientsList = await this.clientes?.listar() || [];
+          
+          const clisMap = new Map<number, any>();
+          clientsList.forEach(c => clisMap.set(c.id!, c));
+
+          rawData = allImpls.map((impl: any) => ({
             ...impl,
             clientes: impl.cliente_id ? clisMap.get(impl.cliente_id) : undefined
           }));
@@ -304,16 +432,6 @@ export const API = {
           plano_id: impl.plano_id || mapping[impl.id] || ""
         }));
 
-        const saved = localStorage.getItem("gst_implementos");
-        if (saved) {
-          const localList: Implemento[] = JSON.parse(saved);
-          const supabaseIds = new Set(mergedWithPlans.map(i => i.id));
-          const localOnly = localList.filter(i => !supabaseIds.has(i.id));
-          const merged = [...mergedWithPlans, ...localOnly];
-          localStorage.setItem("gst_implementos", JSON.stringify(merged));
-          return merged;
-        }
-        localStorage.setItem("gst_implementos", JSON.stringify(mergedWithPlans));
         return mergedWithPlans;
       } catch (err) {
         console.warn("Falling back to simulated implementos...", err);
@@ -395,7 +513,21 @@ export const API = {
 
     async inserir(implemento: Implemento): Promise<Implemento> {
       try {
-        const { clientes, id, ...cleanPayload } = implemento;
+        const { clientes, id, ...rawPayload } = implemento;
+        const cleanPayload: any = { ...rawPayload };
+        if (cleanPayload.cliente_id !== undefined && cleanPayload.cliente_id !== null && cleanPayload.cliente_id !== "") {
+          cleanPayload.cliente_id = Number(cleanPayload.cliente_id);
+          if (isNaN(cleanPayload.cliente_id)) {
+            delete cleanPayload.cliente_id;
+          }
+        } else {
+          delete cleanPayload.cliente_id;
+        }
+
+        if (!cleanPayload.plano_id) {
+          delete cleanPayload.plano_id;
+        }
+
         // Try inserting with the clean payload first
         const { data, error } = await supabase
           .from("implementos")
@@ -436,37 +568,28 @@ export const API = {
 
         return data;
       } catch (err) {
-        const list = await this.listar();
-        const nextId = list.reduce((max, i) => Math.max(max, i.id || 0), 0) + 1;
-        // Embed the client details
-        const clients = await API.clientes.listar();
-        const foundClient = clients.find(c => c.id === Number(implemento.cliente_id));
-        const newImplemento: Implemento = { 
-          ...implemento, 
-          id: nextId,
-          clientes: foundClient ? {
-            id: foundClient.id!,
-            razao_social: foundClient.razao_social,
-            cidade: foundClient.cidade,
-            uf: foundClient.uf
-          } : undefined
-        };
-        localStorage.setItem("gst_implementos", JSON.stringify([...list, newImplemento]));
-        
-        if (implemento.plano_id) {
-          const plansMapping = localStorage.getItem("gst_implemento_planos");
-          const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-          mapping[nextId] = implemento.plano_id;
-          localStorage.setItem("gst_implemento_planos", JSON.stringify(mapping));
-        }
-
-        return newImplemento;
+        console.error("ERRO SUPABASE INSERT IMPLEMENTO:", err);
+        throw err;
       }
     },
 
     async atualizar(id: number, implemento: Implemento): Promise<Implemento> {
       try {
-        const { clientes, id: _, ...cleanPayload } = implemento;
+        const { clientes, id: _, ...rawPayload } = implemento;
+        const cleanPayload: any = { ...rawPayload };
+        if (cleanPayload.cliente_id !== undefined && cleanPayload.cliente_id !== null && cleanPayload.cliente_id !== "") {
+          cleanPayload.cliente_id = Number(cleanPayload.cliente_id);
+          if (isNaN(cleanPayload.cliente_id)) {
+            delete cleanPayload.cliente_id;
+          }
+        } else {
+          delete cleanPayload.cliente_id;
+        }
+
+        if (!cleanPayload.plano_id) {
+          delete cleanPayload.plano_id;
+        }
+
         const { data, error } = await supabase
           .from("implementos")
           .update(cleanPayload)
@@ -512,32 +635,8 @@ export const API = {
 
         return data;
       } catch (err) {
-        const list = await this.listar();
-        const clients = await API.clientes.listar();
-        const foundClient = clients.find(c => c.id === Number(implemento.cliente_id));
-        const updated = list.map(i => i.id === id ? { 
-          ...i, 
-          ...implemento, 
-          id,
-          clientes: foundClient ? {
-            id: foundClient.id!,
-            razao_social: foundClient.razao_social,
-            cidade: foundClient.cidade,
-            uf: foundClient.uf
-          } : i.clientes
-        } : i);
-        localStorage.setItem("gst_implementos", JSON.stringify(updated));
-        
-        const plansMapping = localStorage.getItem("gst_implemento_planos");
-        const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-        if (implemento.plano_id) {
-          mapping[id] = implemento.plano_id;
-        } else {
-          delete mapping[id];
-        }
-        localStorage.setItem("gst_implemento_planos", JSON.stringify(mapping));
-
-        return { ...implemento, id };
+        console.error("ERRO SUPABASE UPDATE IMPLEMENTO:", err);
+        throw err;
       }
     },
 
@@ -585,7 +684,6 @@ export const API = {
         const list = await this.listar();
         const filtered = list.filter(i => i.id !== id);
         localStorage.setItem("gst_implementos", JSON.stringify(filtered));
-
         // Also update local ordens_servico (remove or nullify reference)
         const savedOS = localStorage.getItem("gst_ordens_servico");
         if (savedOS) {
@@ -602,6 +700,7 @@ export const API = {
       }
     },
 
+
     async buscarSerie(serie: string): Promise<Implemento | null> {
       try {
         const { data, error } = await supabase
@@ -614,6 +713,53 @@ export const API = {
       } catch (err) {
         const list = await this.listar();
         return list.find(i => i.numero_serie === serie) || null;
+      }
+    },
+
+    async excluirTodos(): Promise<boolean> {
+      try {
+        // Fetch all implementos IDs first
+        const { data: allImps, error: fetchErr } = await supabase
+          .from("implementos")
+          .select("id");
+        
+        if (fetchErr) {
+          console.error("Error fetching implementos for deletion:", fetchErr);
+        }
+
+        if (allImps && allImps.length > 0) {
+          const ids = allImps.map(i => i.id);
+
+          // Nullify references in ordens_servico
+          await supabase
+            .from("ordens_servico")
+            .update({ implemento_id: null })
+            .in("implemento_id", ids);
+
+          // Delete implementos by ID list
+          const { error: delErr } = await supabase
+            .from("implementos")
+            .delete()
+            .in("id", ids);
+
+          if (delErr) {
+            console.error("Error deleting implementos by id list:", delErr);
+            throw delErr;
+          }
+        }
+
+        // Also fallback delete all just in case
+        const { error: finalErr } = await supabase.from("implementos").delete().neq("id", -999999);
+        if (finalErr) {
+          console.error("Error final delete:", finalErr);
+          throw finalErr;
+        }
+
+        localStorage.removeItem("gst_implementos");
+        return true;
+      } catch (err) {
+        console.error("Error clearing implementos:", err);
+        throw err;
       }
     }
   },
@@ -678,15 +824,16 @@ export const API = {
 
     async inserir(tecnico: Tecnico): Promise<Tecnico> {
       try {
+        const { id, ...cleanTecnico } = tecnico as any;
         const { data, error } = await supabase
           .from("tecnicos")
-          .insert(tecnico)
+          .insert(cleanTecnico)
           .select()
           .single();
         
         if (error) {
           if (error.code === "42703" || error.message?.includes("comissao")) {
-            const { comissao_tecnico, comissao_auxiliar, ...dbPayload } = tecnico as any;
+            const { comissao_tecnico, comissao_auxiliar, id: _, ...dbPayload } = tecnico as any;
             const retryResult = await supabase
               .from("tecnicos")
               .insert(dbPayload)
@@ -717,16 +864,17 @@ export const API = {
 
     async atualizar(id: number, tecnico: Tecnico): Promise<Tecnico> {
       try {
+        const { id: _, ...cleanTecnico } = tecnico as any;
         const { data, error } = await supabase
           .from("tecnicos")
-          .update(tecnico)
+          .update(cleanTecnico)
           .eq("id", id)
           .select()
           .single();
         
         if (error) {
           if (error.code === "42703" || error.message?.includes("comissao")) {
-            const { comissao_tecnico, comissao_auxiliar, ...dbPayload } = tecnico as any;
+            const { comissao_tecnico, comissao_auxiliar, id: __, ...dbPayload } = tecnico as any;
             const retryResult = await supabase
               .from("tecnicos")
               .update(dbPayload)
@@ -780,47 +928,58 @@ export const API = {
   ordensServico: {
     async listar(): Promise<OrdemServico[]> {
       try {
-        let { data, error } = await supabase
-          .from("ordens_servico")
-          .select(`
-            *,
-            clientes (id, razao_social, cidade, uf),
-            implementos (id, fabricante, categoria, modelo, numero_serie)
-          `)
-          .order("id", { ascending: false });
-        
-        // Handle join failures (PGRST200)
-        if (error && error.code === "PGRST200") {
-          console.warn("Join failed in listar, fetching relations separately...");
-          const { data: baseData, error: baseError } = await supabase
-            .from("ordens_servico")
-            .select("*")
-            .order("id", { ascending: false });
-          
-          if (baseError) throw baseError;
-          
-          const [clients, implements_data] = await Promise.all([
-            API.clientes.listar(),
-            API.implementos.listar()
-          ]);
+        let allDataWithClientes: any[] = [];
+        let hasMore = true;
+        let startRel = 0;
+        const step = 1000;
 
-          data = (baseData || []).map(o => ({
-            ...o,
-            clientes: clients.find(c => c.id === o.cliente_id),
-            implementos: implements_data.find(i => i.id === o.implemento_id)
-          }));
-          error = null;
+        const implementosPromise = API.implementos.listar().catch(() => []);
+
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from("ordens_servico")
+            .select(`
+              *,
+              clientes (id, razao_social, cidade, uf)
+            `)
+            .order("id", { ascending: false })
+            .range(startRel, startRel + step - 1);
+          
+          if (error) throw error;
+
+          if (data && data.length > 0) {
+            allDataWithClientes = [...allDataWithClientes, ...data];
+            startRel += step;
+            if (data.length < step) {
+              hasMore = false;
+            }
+          } else {
+            hasMore = false;
+          }
         }
 
-        if (error) throw error;
-        
-        const fetchedData = (data || []).map(o => {
+        const implements_data = await implementosPromise;
+        const implementosMap = new Map((implements_data || []).map(i => [i.id, i]));
+
+        const finalData = allDataWithClientes.map(o => ({
+          ...o,
+          implementos: o.implementos || implementosMap.get(o.implemento_id)
+        }));
+
+        const fetchedData = (finalData || []).map(o => {
+          const horimetroVal = (() => {
+            if (o.horimetro_final !== undefined && o.horimetro_final !== null && o.horimetro_final !== "") return Number(o.horimetro_final);
+            if (o.horimetro !== undefined && o.horimetro !== null && o.horimetro !== "") return Number(o.horimetro);
+            const match = String(o.observacao || o.obs || "").match(/\[Horímetro:\s*(\d+(?:\.\d+)?)h?\]/i);
+            return match ? Number(match[1]) : undefined;
+          })();
+
           const os: any = {
             ...o,
             reclamacao: o.reclamacao || o.problema || o.problema_relatado || "",
             servico_executado: o.servico_executado || o.servico || o.laudo || "",
             observacao: o.observacao || o.obs || "",
-            horimetro_final: o.horimetro_final || o.horimetro || undefined,
+            horimetro_final: horimetroVal,
             km_rodado_total: o.km_rodado_total || o.km_rodado || 0,
             numero_os: (o.numero_os === "EMPTY" || !o.numero_os || o.numero_os === "NOVA") ? null : o.numero_os
           };
@@ -850,74 +1009,46 @@ export const API = {
 
     async buscar(id: number): Promise<OrdemServico | null> {
       try {
-        let rawData: any = null;
-        let relationError = false;
-
         const { data, error } = await supabase
           .from("ordens_servico")
           .select(`
             *,
-            clientes (*),
-            implementos (*)
+            clientes (*)
           `)
           .eq("id", id)
-          .single();
-          
-        if (error) {
-          if (error.code === "PGRST200" || error.message?.includes("relationship") || error.message?.includes("foreign key")) {
-            relationError = true;
-          } else {
-            throw error;
-          }
-        } else {
-          rawData = data;
-        }
+          .maybeSingle();
 
-        if (relationError) {
-          const { data: os, error: osErr } = await supabase
-            .from("ordens_servico")
+        if (error) throw error;
+        if (!data) return null;
+
+        let impData = undefined;
+        if (data.implemento_id) {
+          const { data: imp } = await supabase
+            .from("implementos")
             .select("*")
-            .eq("id", id)
+            .eq("id", data.implemento_id)
             .maybeSingle();
-          if (osErr) throw osErr;
-          if (!os) return null;
-
-          let clientData = undefined;
-          if (os.cliente_id) {
-            const { data: cli } = await supabase
-              .from("clientes")
-              .select("*")
-              .eq("id", os.cliente_id)
-              .maybeSingle();
-            if (cli) clientData = cli;
-          }
-
-          let impData = undefined;
-          if (os.implemento_id) {
-            const { data: imp } = await supabase
-              .from("implementos")
-              .select("*")
-              .eq("id", os.implemento_id)
-              .maybeSingle();
-            if (imp) impData = imp;
-          }
-
-          rawData = {
-            ...os,
-            clientes: clientData,
-            implementos: impData
-          };
+          if (imp) impData = imp;
         }
 
-        if (!rawData) return null;
-        
-        // Map common DB field names to frontend names
+        const rawData = {
+          ...data,
+          implementos: impData
+        };
+
+        const horimetroVal = (() => {
+          if (rawData.horimetro_final !== undefined && rawData.horimetro_final !== null && rawData.horimetro_final !== "") return Number(rawData.horimetro_final);
+          if (rawData.horimetro !== undefined && rawData.horimetro !== null && rawData.horimetro !== "") return Number(rawData.horimetro);
+          const match = String(rawData.observacao || rawData.obs || "").match(/\[Horímetro:\s*(\d+(?:\.\d+)?)h?\]/i);
+          return match ? Number(match[1]) : undefined;
+        })();
+
         return {
           ...rawData,
           reclamacao: rawData.reclamacao || rawData.problema || rawData.problema_relatado || "",
           servico_executado: rawData.servico_executado || rawData.servico || rawData.laudo || "",
           observacao: rawData.observacao || rawData.obs || "",
-          horimetro_final: rawData.horimetro_final || rawData.horimetro || undefined,
+          horimetro_final: horimetroVal,
           km_rodado_total: rawData.km_rodado_total || rawData.km_rodado || 0,
         } as OrdemServico;
       } catch (err) {
@@ -965,10 +1096,31 @@ export const API = {
       if (cleanOS.reclamacao && !payload.problema) payload.problema = cleanOS.reclamacao;
       if (cleanOS.servico_executado) { payload.servico = cleanOS.servico_executado; 
         payload.servico_executado = cleanOS.servico_executado;
-        
       }
       if (cleanOS.observacao && !payload.obs) payload.obs = cleanOS.observacao;
-      if (cleanOS.horimetro_final && !payload.horimetro) payload.horimetro = cleanOS.horimetro_final;
+      if (cleanOS.horimetro_final !== undefined && cleanOS.horimetro_final !== null && String(cleanOS.horimetro_final) !== "") {
+        payload.horimetro = cleanOS.horimetro_final;
+        // Ensure horimetro tag is present in obs/observacao so Supabase saves it inside the text field
+        const hTag = `[Horímetro: ${cleanOS.horimetro_final}h]`;
+        if (!String(payload.obs || "").includes("[Horímetro:")) {
+          payload.obs = `${payload.obs || ""} ${hTag}`.trim();
+        }
+        if (!String(payload.observacao || "").includes("[Horímetro:")) {
+          payload.observacao = `${payload.observacao || ""} ${hTag}`.trim();
+        }
+
+        // Auto update implement horimetro_atual
+        if (cleanOS.implemento_id) {
+          this.implementos?.buscar(cleanOS.implemento_id).then(imp => {
+            if (imp) {
+              const newH = Number(cleanOS.horimetro_final);
+              if (newH > (Number(imp.horimetro_atual) || 0)) {
+                this.implementos?.atualizar(imp.id!, { ...imp, horimetro_atual: newH });
+              }
+            }
+          }).catch(() => {});
+        }
+      }
       if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
       
       // Sanitize time fields: if empty string, set to null to avoid DB errors
@@ -983,6 +1135,14 @@ export const API = {
         }
       }
       
+      
+      if (payload.hora_inicial !== undefined) payload.hora_inicial = cleanTimeVal(payload.hora_inicial);
+      if (payload.hora_final !== undefined) payload.hora_final = cleanTimeVal(payload.hora_final);
+      if (payload.numero_os) payload.numero_os = String(payload.numero_os).substring(0, 20);
+      if (payload.status) payload.status = String(payload.status).substring(0, 30);
+      if (payload.prioridade) payload.prioridade = String(payload.prioridade).substring(0, 20);
+      if (payload.tipo_atendimento) payload.tipo_atendimento = String(payload.tipo_atendimento).substring(0, 50);
+
       // Default data_abertura if missing
       if (!payload.data_abertura) payload.data_abertura = new Date().toISOString();
 
@@ -1077,10 +1237,31 @@ export const API = {
       if (cleanOS.reclamacao && !payload.problema) payload.problema = cleanOS.reclamacao;
       if (cleanOS.servico_executado) { payload.servico = cleanOS.servico_executado; 
         payload.servico_executado = cleanOS.servico_executado;
-        
       }
       if (cleanOS.observacao && !payload.obs) payload.obs = cleanOS.observacao;
-      if (cleanOS.horimetro_final && !payload.horimetro) payload.horimetro = cleanOS.horimetro_final;
+      if (cleanOS.horimetro_final !== undefined && cleanOS.horimetro_final !== null && String(cleanOS.horimetro_final) !== "") {
+        payload.horimetro = cleanOS.horimetro_final;
+        // Ensure horimetro tag is present in obs/observacao so Supabase saves it inside the text field
+        const hTag = `[Horímetro: ${cleanOS.horimetro_final}h]`;
+        if (!String(payload.obs || "").includes("[Horímetro:")) {
+          payload.obs = `${payload.obs || ""} ${hTag}`.trim();
+        }
+        if (!String(payload.observacao || "").includes("[Horímetro:")) {
+          payload.observacao = `${payload.observacao || ""} ${hTag}`.trim();
+        }
+
+        // Auto update implement horimetro_atual
+        if (cleanOS.implemento_id) {
+          this.implementos?.buscar(cleanOS.implemento_id).then(imp => {
+            if (imp) {
+              const newH = Number(cleanOS.horimetro_final);
+              if (newH > (Number(imp.horimetro_atual) || 0)) {
+                this.implementos?.atualizar(imp.id!, { ...imp, horimetro_atual: newH });
+              }
+            }
+          }).catch(() => {});
+        }
+      }
       if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
       
       // Sanitize time fields: if empty string, set to null to avoid DB errors
@@ -1563,18 +1744,52 @@ export const API = {
   planos: {
     listar(): PlanoManutencao[] {
       const saved = localStorage.getItem("gst_planos");
-      if (saved) return JSON.parse(saved);
-      localStorage.setItem("gst_planos", JSON.stringify(INITIAL_PLANOS));
-      return INITIAL_PLANOS;
+      const localList: PlanoManutencao[] = saved ? JSON.parse(saved) : INITIAL_PLANOS;
+      if (!saved) {
+        localStorage.setItem("gst_planos", JSON.stringify(INITIAL_PLANOS));
+      }
+
+      const remotePromise = (async () => {
+        try {
+          const { data, error } = await supabase
+            .from("planos_manutencao")
+            .select("*")
+            .order("id", { ascending: true });
+          if (!error && data) {
+            const mapped: PlanoManutencao[] = data.map((d: any) => ({
+              id: d.id,
+              fabricante: d.fabricante || "",
+              modelo: d.modelo || "",
+              garantia_meses: Number(d.garantia_meses || 12),
+              horimetro_base: Number(d.horimetro_base || 50),
+              ativo: d.ativo !== false,
+              observacao: d.observacao || "",
+              grupo: d.grupo || "TRATORES"
+            }));
+            localStorage.setItem("gst_planos", JSON.stringify(mapped));
+            return mapped;
+          }
+        } catch (err) {
+          console.warn("Could not fetch planos from Supabase:", err);
+        }
+        return localList;
+      })();
+
+      const result = [...localList];
+      (result as any).then = remotePromise.then.bind(remotePromise);
+      (result as any).catch = remotePromise.catch.bind(remotePromise);
+      return result as any;
     },
 
     buscar(id: string): PlanoManutencao | null {
-      return this.listar().find(p => p.id === id) || null;
+      const list = this.listar();
+      return list.find(p => p.id === id) || null;
     },
 
-    salvar(plano: PlanoManutencao): PlanoManutencao {
-      const list = this.listar();
-      let updatedList;
+    async salvar(plano: PlanoManutencao): Promise<PlanoManutencao> {
+      const saved = localStorage.getItem("gst_planos");
+      const list: PlanoManutencao[] = saved ? JSON.parse(saved) : INITIAL_PLANOS;
+      let updatedList: PlanoManutencao[];
       let targetPlano = { ...plano };
       if (!plano.id) {
         const nextNum = list.reduce((max, p) => Math.max(max, parseInt(p.id.replace("PM", "")) || 0), 0) + 1;
@@ -1584,13 +1799,41 @@ export const API = {
         updatedList = list.map(p => p.id === plano.id ? targetPlano : p);
       }
       localStorage.setItem("gst_planos", JSON.stringify(updatedList));
+
+      try {
+        const payload = {
+          id: targetPlano.id,
+          fabricante: targetPlano.fabricante,
+          modelo: targetPlano.modelo,
+          garantia_meses: targetPlano.garantia_meses,
+          horimetro_base: targetPlano.horimetro_base,
+          ativo: targetPlano.ativo,
+          observacao: targetPlano.observacao || "",
+          grupo: targetPlano.grupo || "TRATORES"
+        };
+        const { error } = await supabase
+          .from("planos_manutencao")
+          .upsert(payload);
+        if (error) console.error("Error saving plano to Supabase:", error);
+      } catch (err) {
+        console.warn("Could not sync plano to Supabase:", err);
+      }
       return targetPlano;
     },
 
-    excluir(id: string): boolean {
-      const list = this.listar();
+    async excluir(id: string): Promise<boolean> {
+      const saved = localStorage.getItem("gst_planos");
+      const list: PlanoManutencao[] = saved ? JSON.parse(saved) : INITIAL_PLANOS;
       const filtered = list.filter(p => p.id !== id);
       localStorage.setItem("gst_planos", JSON.stringify(filtered));
+
+      try {
+        await supabase.from("revisoes_plano").delete().eq("id_plano", id);
+        const { error } = await supabase.from("planos_manutencao").delete().eq("id", id);
+        if (error) console.error("Error deleting plano from Supabase:", error);
+      } catch (err) {
+        console.warn("Could not delete plano from Supabase:", err);
+      }
       return true;
     },
 
@@ -1601,13 +1844,46 @@ export const API = {
         if (!saved) {
           localStorage.setItem("gst_revisoes", JSON.stringify(INITIAL_REVISOES));
         }
-        return list.filter(r => r.id_plano === planoId).sort((a, b) => a.revisao_numero - b.revisao_numero);
+        const filtered = list.filter(r => r.id_plano === planoId).sort((a, b) => a.revisao_numero - b.revisao_numero);
+
+        const remotePromise = (async () => {
+          try {
+            const { data, error } = await supabase
+              .from("revisoes_plano")
+              .select("*")
+              .eq("id_plano", planoId)
+              .order("revisao_numero", { ascending: true });
+            if (!error && data) {
+              const mapped: PlanoRevisao[] = data.map((d: any) => ({
+                id_revisao: d.id_revisao,
+                id_plano: d.id_plano,
+                revisao_numero: Number(d.revisao_numero),
+                horas_limite: Number(d.horas_limite),
+                meses_limite: Number(d.meses_limite),
+                descricao: d.descricao || ""
+              }));
+              const freshSaved = localStorage.getItem("gst_revisoes");
+              const allLocal: PlanoRevisao[] = freshSaved ? JSON.parse(freshSaved) : INITIAL_REVISOES;
+              const others = allLocal.filter(r => r.id_plano !== planoId);
+              localStorage.setItem("gst_revisoes", JSON.stringify([...others, ...mapped]));
+              return mapped;
+            }
+          } catch (err) {
+            console.warn("Could not fetch revisoes from Supabase:", err);
+          }
+          return filtered;
+        })();
+
+        const result = [...filtered];
+        (result as any).then = remotePromise.then.bind(remotePromise);
+        (result as any).catch = remotePromise.catch.bind(remotePromise);
+        return result as any;
       },
 
-      salvar(revisao: PlanoRevisao): PlanoRevisao {
+      async salvar(revisao: PlanoRevisao): Promise<PlanoRevisao> {
         const saved = localStorage.getItem("gst_revisoes");
         const list: PlanoRevisao[] = saved ? JSON.parse(saved) : INITIAL_REVISOES;
-        let updatedList;
+        let updatedList: PlanoRevisao[];
         let targetRev = { ...revisao };
         if (!revisao.id_revisao) {
           const nextNum = list.reduce((max, r) => Math.max(max, parseInt(r.id_revisao?.replace("PR", "") || "0") || 0), 0) + 1;
@@ -1617,14 +1893,52 @@ export const API = {
           updatedList = list.map(r => r.id_revisao === revisao.id_revisao ? targetRev : r);
         }
         localStorage.setItem("gst_revisoes", JSON.stringify(updatedList));
+
+        try {
+          const payload = {
+            id_revisao: targetRev.id_revisao,
+            id_plano: targetRev.id_plano,
+            revisao_numero: targetRev.revisao_numero,
+            horas_limite: targetRev.horas_limite,
+            meses_limite: targetRev.meses_limite,
+            descricao: targetRev.descricao || ""
+          };
+          const { error } = await supabase
+            .from("revisoes_plano")
+            .upsert(payload);
+          if (error) console.error("Error saving revisao to Supabase:", error);
+        } catch (err) {
+          console.warn("Could not sync revisao to Supabase:", err);
+        }
         return targetRev;
       },
 
-      excluir(id: string): boolean {
-        const saved = localStorage.getItem("gst_revisoes");
-        const list: PlanoRevisao[] = saved ? JSON.parse(saved) : INITIAL_REVISOES;
-        const filtered = list.filter(r => r.id_revisao !== id);
+      async excluir(id: string, planoId?: string, revisaoNum?: number): Promise<boolean> {
+        const freshSaved = localStorage.getItem("gst_revisoes");
+        const list: PlanoRevisao[] = freshSaved ? JSON.parse(freshSaved) : INITIAL_REVISOES;
+        const filtered = list.filter(r => {
+          if (id && r.id_revisao === id) return false;
+          if (planoId && r.id_plano === planoId && r.revisao_numero === revisaoNum) return false;
+          return true;
+        });
         localStorage.setItem("gst_revisoes", JSON.stringify(filtered));
+
+        try {
+          if (id) {
+            const { error: err1 } = await supabase.from("revisoes_plano").delete().eq("id_revisao", id);
+            if (err1) console.error("Error deleting revisao by id from Supabase:", err1);
+          }
+          if (planoId && revisaoNum !== undefined) {
+            const { error: err2 } = await supabase
+              .from("revisoes_plano")
+              .delete()
+              .eq("id_plano", planoId)
+              .eq("revisao_numero", revisaoNum);
+            if (err2) console.error("Error deleting revisao by plano/num from Supabase:", err2);
+          }
+        } catch (err) {
+          console.warn("Could not delete revisao from Supabase:", err);
+        }
         return true;
       }
     }
@@ -1689,9 +2003,10 @@ export const API = {
 
       // Attempt Supabase insert in background
       try {
+        const { id: _, ...vPayload } = veiculo as any;
         await supabase
           .from("veiculos")
-          .insert(newVeiculo);
+          .insert(vPayload);
       } catch (err) {
         console.warn("Could not sync insert to Supabase, saved locally:", err);
       }
@@ -1705,9 +2020,10 @@ export const API = {
 
       // Attempt Supabase update in background
       try {
+        const { id: _, ...vPayload } = veiculo as any;
         await supabase
           .from("veiculos")
-          .update(veiculo)
+          .update(vPayload)
           .eq("id", id);
       } catch (err) {
         console.warn("Could not sync update to Supabase, saved locally:", err);
@@ -1782,9 +2098,10 @@ export const API = {
 
       // Attempt Supabase insert in background
       try {
+        const { id: _, ...tPayload } = tipo as any;
         await supabase
           .from("tipos_atendimento")
-          .insert(newTipo);
+          .insert(tPayload);
       } catch (err) {
         console.warn("Could not sync insert to Supabase, saved locally:", err);
       }
@@ -1798,9 +2115,10 @@ export const API = {
 
       // Attempt Supabase update in background
       try {
+        const { id: _, ...tPayload } = tipo as any;
         await supabase
           .from("tipos_atendimento")
-          .update(tipo)
+          .update(tPayload)
           .eq("id", id);
       } catch (err) {
         console.warn("Could not sync update to Supabase, saved locally:", err);
