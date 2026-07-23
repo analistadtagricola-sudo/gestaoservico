@@ -31,7 +31,7 @@ interface DashboardViewProps {
   implementos: Implemento[];
   tecnicos: Tecnico[];
   ordens: OrdemServico[];
-  onNavigate: (view: string, targetId?: number) => void;
+  onNavigate: (view: string, targetId?: number, params?: any) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -85,7 +85,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const itemVariants = {
     hidden: { y: 12, opacity: 0 },
-    show: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 120, damping: 14 } }
+    show: { y: 0, opacity: 1, transition: { type: "spring" as const, stiffness: 120, damping: 14 } }
   };
 
   return (
@@ -218,58 +218,117 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </motion.div>
       </div>
 
-      {/* O.S. Status Tracker Bento Grid */}
-      <div className="space-y-3">
+      {/* Painel de Ordens de Serviço por Status */}
+      <div className="space-y-4">
         <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-brand-red" /> Monitoramento de O.S. por Status
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-brand-red" /> Ordens de Serviço por Status
         </h3>
-        
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          {/* Aberta */}
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs relative overflow-hidden group hover:border-amber-300 transition-colors">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-amber-400" />
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Abertas</p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          {/* Card: Abertas */}
+          <motion.div
+            variants={itemVariants}
+            onClick={() => onNavigate("os", undefined, { status: "ABERTA" })}
+            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-amber-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-amber-500" />
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">Abertas</span>
+              <div className="p-2 bg-amber-50 text-amber-600 rounded-xl group-hover:bg-amber-500 group-hover:text-white transition-colors duration-300">
+                <FileText className="w-4 h-4" />
+              </div>
             </div>
-            <p className="font-display text-3xl font-extrabold mt-2 text-gray-800">{osAbertas}</p>
-          </div>
-          {/* Em Atendimento */}
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs relative overflow-hidden group hover:border-blue-300 transition-colors">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500" />
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Em Atendimento</p>
+            <div className="mt-4">
+              <h2 className="text-3xl font-extrabold font-display text-brand-ink leading-none">
+                {osAbertas}
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase tracking-wide">Aguardando início</p>
             </div>
-            <p className="font-display text-3xl font-extrabold mt-2 text-gray-800">{osAtendimento}</p>
-          </div>
-          {/* Agendadas */}
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs relative overflow-hidden group hover:border-orange-300 transition-colors">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-orange-500" />
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Agendadas</p>
+          </motion.div>
+
+          {/* Card: Agendadas */}
+          <motion.div
+            variants={itemVariants}
+            onClick={() => onNavigate("os", undefined, { status: "AGENDADA" })}
+            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-orange-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-orange-500" />
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">Agendadas</span>
+              <div className="p-2 bg-orange-50 text-orange-600 rounded-xl group-hover:bg-orange-500 group-hover:text-white transition-colors duration-300">
+                <Clock className="w-4 h-4" />
+              </div>
             </div>
-            <p className="font-display text-3xl font-extrabold mt-2 text-gray-800">{osAgendadas}</p>
-          </div>
-          {/* Aguardando Finalização */}
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs relative overflow-hidden group hover:border-purple-300 transition-colors">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-purple-600" />
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Aguardando Finalização</p>
+            <div className="mt-4">
+              <h2 className="text-3xl font-extrabold font-display text-brand-ink leading-none">
+                {osAgendadas}
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase tracking-wide">Programadas</p>
             </div>
-            <p className="font-display text-3xl font-extrabold mt-2 text-gray-800">{osAguardando}</p>
-          </div>
-          {/* Finalizadas */}
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs relative col-span-2 md:col-span-1 overflow-hidden group hover:border-emerald-300 transition-colors">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Finalizadas</p>
+          </motion.div>
+
+          {/* Card: Em Atendimento */}
+          <motion.div
+            variants={itemVariants}
+            onClick={() => onNavigate("os", undefined, { status: "EM ATENDIMENTO" })}
+            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-blue-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-blue-500" />
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">Em Atendimento</span>
+              <div className="p-2 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-500 group-hover:text-white transition-colors duration-300">
+                <Briefcase className="w-4 h-4" />
+              </div>
             </div>
-            <p className="font-display text-3xl font-extrabold mt-2 text-gray-800">{osFinalizadas}</p>
-          </div>
+            <div className="mt-4">
+              <h2 className="text-3xl font-extrabold font-display text-brand-ink leading-none">
+                {osAtendimento}
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase tracking-wide">Executando em campo</p>
+            </div>
+          </motion.div>
+
+          {/* Card: Aguardando Peças */}
+          <motion.div
+            variants={itemVariants}
+            onClick={() => onNavigate("os", undefined, { status: "AGUARDANDO" })}
+            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-purple-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-purple-500" />
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">Aguardando Peças</span>
+              <div className="p-2 bg-purple-50 text-purple-600 rounded-xl group-hover:bg-purple-500 group-hover:text-white transition-colors duration-300">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-4">
+              <h2 className="text-3xl font-extrabold font-display text-brand-ink leading-none">
+                {osAguardando}
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase tracking-wide">Pendente de peças</p>
+            </div>
+          </motion.div>
+
+          {/* Card: Finalizadas */}
+          <motion.div
+            variants={itemVariants}
+            onClick={() => onNavigate("os", undefined, { status: "FINALIZADA" })}
+            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">Concluídas</span>
+              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl group-hover:bg-emerald-500 group-hover:text-white transition-colors duration-300">
+                <CheckCircle className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-4">
+              <h2 className="text-3xl font-extrabold font-display text-brand-ink leading-none">
+                {osFinalizadas}
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase tracking-wide">Finalizadas</p>
+            </div>
+          </motion.div>
         </div>
       </div>
 

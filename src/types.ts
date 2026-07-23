@@ -36,6 +36,7 @@ export interface Implemento {
   numero_serie: string;
   ano?: number;
   horimetro_atual?: number;
+  localizacao?: string;
   data_entrega?: string;
   ativo?: boolean;
   observacao?: string;
@@ -103,6 +104,8 @@ export interface OrdemServico {
   valor_total?: number;
   horimetro?: number;
   horimetro_final?: number;
+  localizacao_maquina?: string;
+  localizacao?: string;
   revisao_executada?: string;
 
   // Custom commission overrides for variants of Entrega Técnica / custom values
@@ -119,13 +122,23 @@ export interface OrdemServico {
   observacao_debito?: string;
 
   // Embedded relations from Supabase queries
+  apontamentos?: Apontamento[];
+  km_rodado?: number;
+  outros_custos?: number;
   clientes?: {
     id: number;
     razao_social: string;
+    nome_fantasia?: string;
+    endereco?: string;
+    numero?: string;
+    bairro?: string;
     cidade: string;
     uf: string;
     telefone?: string;
     celular?: string;
+    codigo_sankhya?: string;
+    cpf_cnpj?: string;
+    nome_contato?: string;
   };
   implementos?: {
     id: number;
@@ -136,6 +149,10 @@ export interface OrdemServico {
     ano?: number;
     data_entrega?: string;
     ativo?: boolean;
+    horimetro?: number;
+    localizacao?: string;
+    potencia?: string;
+    rpm?: string;
   };
 }
 
@@ -223,4 +240,49 @@ export interface TipoAtendimento {
   descricao?: string;
   ativo?: boolean;
 }
+
+export interface SystemRole {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  systemInstruction: string;
+}
+
+export type ChatModel = 'gemini-3.6-flash' | 'gemini-3.1-pro' | 'gemini-3-flash-lite' | 'gemini-3-pro' | string;
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'model' | 'system';
+  content: string;
+  timestamp: string;
+  modelUsed?: string;
+  latencyMs?: number;
+  error?: boolean;
+}
+
+export type ImageModel = 'gemini-3-pro-image' | 'imagen-3.0-generate-002';
+export type ImageResolution = '1K' | '2K' | '4K';
+export type AspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
+
+export interface GeneratedImage {
+  id: string;
+  prompt: string;
+  imageUrl: string;
+  model: ImageModel;
+  resolution: ImageResolution;
+  aspectRatio: AspectRatio;
+  createdAt: string;
+  latencyMs: number;
+}
+
+export type LowLatencyTaskType = 'summarize' | 'translate' | 'extract_bullets' | 'fix_grammar' | 'code_quick_fix';
+
+export interface LowLatencyResult {
+  output: string;
+  latencyMs: number;
+  taskType: LowLatencyTaskType;
+  inputSnippet: string;
+}
+
 

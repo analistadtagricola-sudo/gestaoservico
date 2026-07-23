@@ -7,6 +7,7 @@ import {
   CalendarRange, 
   Users, 
   ShieldAlert, 
+  ShieldCheck,
   FileBarChart2, 
   Settings, 
   RefreshCw, 
@@ -46,11 +47,10 @@ import { LayoutView } from "./components/LayoutView";
 import { ComissoesConfigView } from "./components/ComissoesConfigView";
 import { ConfigAgendaView } from "./components/ConfigAgendaView";
 import { IntegracoesView } from "./components/IntegracoesView";
-import { BackupView } from "./components/BackupView";
 import { LogsView } from "./components/LogsView";
-import { SobreView } from "./components/SobreView";
+import { GarantiasView } from "./components/GarantiasView";
 
-type ActiveView = "dashboard" | "os" | "agenda" | "clientes" | "implementos" | "tecnicos" | "planos" | "relatorios" | "comissoes" | "usuarios" | "veiculos" | "tipos_atendimento" | "empresa" | "layout" | "config_agenda" | "comissoes_config" | "integracoes" | "backup" | "logs" | "sobre";
+type ActiveView = "dashboard" | "os" | "agenda" | "clientes" | "implementos" | "tecnicos" | "planos" | "relatorios" | "comissoes" | "usuarios" | "veiculos" | "tipos_atendimento" | "empresa" | "layout" | "config_agenda" | "comissoes_config" | "integracoes" | "logs" | "garantias";
 
 interface WorkspaceTab {
   id: string; // unique tab identifier
@@ -192,7 +192,7 @@ export function AppContent() {
   }, []);
 
   // Safe navigation proxy to handle browser-like tab routing
-  const handleNavigateWithTarget = (viewStr: string, targetId?: number) => {
+  const handleNavigateWithTarget = (viewStr: string, targetId?: number, params?: any) => {
     const view = viewStr as ActiveView;
     let tabId = viewStr;
     let tabLabel = "";
@@ -219,13 +219,19 @@ export function AppContent() {
     // Check if tab already exists
     const existing = tabs.find(t => t.id === tabId);
     if (existing) {
+      if (params) {
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, params: { ...t.params, ...params } } : t));
+      } else {
+        // If navigating to the general tab without params, make sure status filter is cleared if it was selected
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, params: undefined } : t));
+      }
       setActiveTabId(tabId);
     } else {
       const newTab: WorkspaceTab = {
         id: tabId,
         label: tabLabel,
         view,
-        params: targetId !== undefined ? { osId: targetId } : undefined,
+        params: params || (targetId !== undefined ? { osId: targetId } : undefined),
         closable: true,
         status: viewStr === "os" && targetId ? ordens.find(o => o.id === targetId)?.status : undefined
       };
@@ -259,12 +265,13 @@ export function AppContent() {
     { id: "implementos", label: "Implementos", icon: Tractor, category: "OPERAÇÃO", permissionKey: "implementos" as keyof Permissions },
     { id: "os", label: "Ordem de Serviço", icon: ClipboardList, category: "OPERAÇÃO", permissionKey: "os" as keyof Permissions },
     { id: "agenda", label: "Agenda", icon: CalendarRange, category: "OPERAÇÃO", permissionKey: "agenda" as keyof Permissions },
+    { id: "garantias", label: "Garantias da Frota", icon: ShieldCheck, category: "OPERAÇÃO", permissionKey: "clientes" as keyof Permissions },
     
     { id: "tecnicos", label: "Técnicos", icon: UserCheck, category: "CADASTROS", permissionKey: "configuracoes" as keyof Permissions },
     { id: "veiculos", label: "Veículos", icon: Tractor, category: "CADASTROS", permissionKey: "configuracoes" as keyof Permissions },
     { id: "tipos_atendimento", label: "Tipos de Atendimento", icon: Settings, category: "CADASTROS", permissionKey: "configuracoes" as keyof Permissions },
     
-    { id: "comissoes", label: "Faturamento & Comissões", icon: DollarSign, category: "GESTÃO", permissionKey: "financeiro" as keyof Permissions },
+    { id: "comissoes", label: "Comissões", icon: DollarSign, category: "GESTÃO", permissionKey: "financeiro" as keyof Permissions },
     { id: "relatorios", label: "Relatórios & Indicadores", icon: FileBarChart2, category: "GESTÃO", permissionKey: "financeiro" as keyof Permissions },
     
     { id: "usuarios", label: "Usuários", icon: Users, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
@@ -273,10 +280,8 @@ export function AppContent() {
     { id: "config_agenda", label: "Agenda (Config)", icon: Calendar, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "comissoes_config", label: "Comissões (Config)", icon: DollarSign, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "integracoes", label: "Integrações", icon: Database, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
-    { id: "backup", label: "Backup", icon: RefreshCw, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
     { id: "logs", label: "Logs", icon: Settings, category: "ADMINISTRAÇÃO", permissionKey: "configuracoes" as keyof Permissions },
-    { id: "planos", label: "Planos de Manutenção", icon: ClipboardList, category: "CADASTROS", permissionKey: "configuracoes" as keyof Permissions },
-    { id: "sobre", label: "Sobre", icon: HelpCircle, category: "ADMINISTRAÇÃO", permissionKey: "dashboard" as keyof Permissions }
+    { id: "planos", label: "Planos de Manutenção", icon: ClipboardList, category: "CADASTROS", permissionKey: "configuracoes" as keyof Permissions }
   ];
 
   const menuItems = allMenuItems.filter(item => {
@@ -619,8 +624,9 @@ export function AppContent() {
                       tecnicos={tecnicos}
                       onRefresh={fetchAllData}
                       preSelectedOSId={activeTab.params?.osId !== undefined ? activeTab.params.osId : null}
+                      preSelectedStatus={activeTab.params?.status !== undefined ? activeTab.params.status : null}
                       onClearPreSelectedOS={() => {
-                        // Safe clear
+                        setTabs(prevTabs => prevTabs.map(t => t.id === activeTab.id ? { ...t, params: undefined } : t));
                       }}
                     />
                   )}
@@ -661,6 +667,9 @@ export function AppContent() {
                   {activeTab.view === "planos" && (
                     <PlanosView onNavigate={handleNavigateWithTarget} />
                   )}
+                  {activeTab.view === "garantias" && (
+                    <GarantiasView onNavigate={handleNavigateWithTarget} />
+                  )}
                   {activeTab.view === "veiculos" && <VeiculosView />}
                   {activeTab.view === "tipos_atendimento" && <TiposAtendimentoView />}
                   {activeTab.view === "empresa" && <EmpresaView />}
@@ -668,9 +677,7 @@ export function AppContent() {
                   {activeTab.view === "config_agenda" && <ConfigAgendaView />}
                   {activeTab.view === "comissoes_config" && <ComissoesConfigView onNavigate={handleNavigateWithTarget} />}
                   {activeTab.view === "integracoes" && <IntegracoesView onRefresh={fetchAllData} />}
-                  {activeTab.view === "backup" && <BackupView />}
                   {activeTab.view === "logs" && <LogsView />}
-                  {activeTab.view === "sobre" && <SobreView />}
 
                   {activeTab.view === "relatorios" && (
                     <RelatoriosView 

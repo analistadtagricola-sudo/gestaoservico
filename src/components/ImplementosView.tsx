@@ -30,7 +30,8 @@ import {
   CheckCircle,
   AlertTriangle,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  MapPin
 } from "lucide-react";
 import { Implemento, Cliente, OrdemServico, PlanoManutencao } from "../types";
 import { API } from "../lib/api";
@@ -65,6 +66,7 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
   const [numeroSerie, setNumeroSerie] = useState("");
   const [ano, setAno] = useState<number | "">("");
   const [dataEntrega, setDataEntrega] = useState("");
+  const [localizacao, setLocalizacao] = useState("");
   const [ativo, setAtivo] = useState(true);
   const [observacao, setObservacao] = useState("");
   const [planoId, setPlanoId] = useState("");
@@ -116,6 +118,7 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
       setNumeroSerie(impl.numero_serie);
       setAno(impl.ano || "");
       setDataEntrega(impl.data_entrega ? impl.data_entrega.substring(0, 10) : "");
+      setLocalizacao(impl.localizacao || "");
       setAtivo(impl.ativo !== false);
       setObservacao(impl.observacao || "");
       setPlanoId(impl.plano_id || "");
@@ -128,6 +131,7 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
       setNumeroSerie("");
       setAno("");
       setDataEntrega("");
+      setLocalizacao("");
       setAtivo(true);
       setObservacao("");
       setPlanoId("");
@@ -160,6 +164,7 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
       numero_serie: numeroSerie.toUpperCase(),
       ano: ano ? Number(ano) : undefined,
       data_entrega: dataEntrega || undefined,
+      localizacao: localizacao.trim() || undefined,
       ativo,
       observacao,
       plano_id: planoId || undefined
@@ -442,6 +447,12 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
                         </td>
                         <td className="p-4">
                           <div className="font-semibold text-brand-ink">{impl.fabricante} — {impl.modelo}</div>
+                          {impl.localizacao && (
+                            <div className="text-[10px] text-gray-500 font-normal flex items-center gap-1 mt-0.5">
+                              <MapPin className="w-3 h-3 text-brand-red shrink-0" />
+                              <span className="truncate max-w-[200px]" title={impl.localizacao}>{impl.localizacao}</span>
+                            </div>
+                          )}
                           {impl.plano_id && (
                             <div className="mt-1">
                               <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
@@ -661,6 +672,14 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
                             const metrics = getDynamicDetails(selectedImplemento.id!);
                             return metrics.lastHorimetro > 0 ? `${metrics.lastHorimetro} h` : "—";
                           })()}
+                        </span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-gray-400 font-bold block flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-brand-red" /> Localização Atual / Fazenda:
+                        </span>
+                        <span className="font-semibold text-gray-800 text-sm mt-0.5 block">
+                          {selectedImplemento.localizacao || "Não informada"}
                         </span>
                       </div>
                       <div className="col-span-2 mt-2 pt-2 border-t border-gray-100">
@@ -1236,6 +1255,21 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
                           <option value="true">Ativo</option>
                           <option value="false">Inativo</option>
                         </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 mt-3">
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-brand-red" /> Localização Atual da Máquina / Fazenda
+                        </label>
+                        <input
+                          type="text"
+                          value={localizacao}
+                          onChange={(e) => setLocalizacao(e.target.value)}
+                          placeholder="Ex: Fazenda Santa Maria - Gleba 2, Ariquemes - RO"
+                          className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red"
+                        />
                       </div>
                     </div>
 

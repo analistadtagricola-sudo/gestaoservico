@@ -11,7 +11,12 @@ import {
   Info,
   ShieldAlert,
   Settings,
-  RotateCcw
+  RotateCcw,
+  Target,
+  TrendingUp,
+  Calendar,
+  Edit3,
+  Sliders
 } from "lucide-react";
 import { API } from "../lib/api";
 import { TipoAtendimento } from "../types";
@@ -40,6 +45,9 @@ interface ComissoesConfigViewProps {
 }
 
 export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavigate }) => {
+  const [modoCalculo, setModoCalculo] = useState<string>("REGRA_MAIS_ESPECIFICA");
+  const [statusOS, setStatusOS] = useState<string>("CONCLUIDA");
+
   const [regraPadrao, setRegraPadrao] = useState<RegraPadrao>({
     baseCalculo: "faturamento_total",
     percentualTecnico: 20,
@@ -56,6 +64,26 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
   const [centrosCusto, setCentrosCusto] = useState<string[]>([]);
   const [novoCentroCusto, setNovoCentroCusto] = useState("");
 
+  // Metas States
+  const [tecnicos, setTecnicos] = useState<any[]>([]);
+  const [metas, setMetas] = useState<any[]>([]);
+  const [metaTecnicoId, setMetaTecnicoId] = useState<string>("");
+  const [metaAno, setMetaAno] = useState<number>(new Date().getFullYear());
+  const [metaMes, setMetaMes] = useState<number>(new Date().getMonth() + 1);
+  const [metaFaturamento, setMetaFaturamento] = useState<string>("");
+  const [metaComissao, setMetaComissao] = useState<string>("");
+  const [metaObservacao, setMetaObservacao] = useState<string>("");
+  const [editingMetaId, setEditingMetaId] = useState<number | string | null>(null);
+
+  // Faixas de Comissão States
+  const [faixas, setFaixas] = useState<any[]>([]);
+  const [faixaNome, setFaixaNome] = useState("");
+  const [faixaValorInicial, setFaixaValorInicial] = useState("");
+  const [faixaValorFinal, setFaixaValorFinal] = useState("");
+  const [faixaPercentual, setFaixaPercentual] = useState("");
+  const [faixaBonusFixo, setFaixaBonusFixo] = useState("");
+  const [editingFaixaId, setEditingFaixaId] = useState<number | string | null>(null);
+
   // New specific rule form fields
   const [novoTipo, setNovoTipo] = useState("");
   const [novoBaseCalculo, setNovoBaseCalculo] = useState<"faturamento_total" | "mao_de_obra_deslocamento" | "horas_e_km_customizado" | "fixo">("faturamento_total");
@@ -66,6 +94,7 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
   const [novoValorAuxiliar, setNovoValorAuxiliar] = useState("");
 
   const [toast, setToast] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [activeTab, setActiveTab] = useState<"regras" | "metas" | "faixas" | "centros">("regras");
 
   const DEFAULT_REGRAS_ATENDIMENTO: RegraAtendimento[] = [
     { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLAINA", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
@@ -76,43 +105,53 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
     { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
     { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES", baseCalculo: "fixo", valorTecnico: 500, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
     { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MANUTENÇÃO CORRETIVA", baseCalculo: "horas_e_km_customizado", valorTecnico: 20, valorHoraComissao: 200, valorKmComissao: 2.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MANUTENÇÃO PREVENTIVA", baseCalculo: "horas_e_km_customizado", valorTecnico: 20, valorHoraComissao: 200, valorKmComissao: 2.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "GARANTIA", baseCalculo: "horas_e_km_customizado", valorTecnico: 20, valorHoraComissao: 200, valorKmComissao: 2.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+    { tipo: "MANUTENÇÃO CORRETIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+    { tipo: "MANUTENÇÃO PREVENTIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+    { tipo: "GARANTIA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
   ];
 
   useEffect(() => {
-    // Load config
-    const savedConfig = localStorage.getItem("gst_comissoes_config");
-    if (savedConfig) {
+    // Load config & rules from API / Supabase
+    const fetchConfigAndRegras = async () => {
       try {
-        const parsed = JSON.parse(savedConfig);
-        if (parsed.regraPadrao) {
-          const migratedRegraPadrao = {
-            ...parsed.regraPadrao,
-            baseCalculo: parsed.regraPadrao.baseCalculo
+        const [dbConfig, dbRegras] = await Promise.all([
+          API.comissaoConfig.obter(),
+          API.comissaoRegras.listar()
+        ]);
+
+        if (dbConfig) {
+          if (dbConfig.modo_calculo) setModoCalculo(dbConfig.modo_calculo);
+          if (dbConfig.status_os) setStatusOS(dbConfig.status_os);
+
+          if (dbConfig.regraPadrao) {
+            setRegraPadrao({
+              baseCalculo: dbConfig.regraPadrao.baseCalculo || "faturamento_total",
+              percentualTecnico: dbConfig.regraPadrao.percentualTecnico ?? dbConfig.regraPadrao.percentualPadrao ?? 20,
+              valorHoraComissao: dbConfig.regraPadrao.valorHoraComissao ?? 50,
+              valorKmComissao: dbConfig.regraPadrao.valorKmComissao ?? 1.50,
+              regraAuxiliar: dbConfig.regraPadrao.regraAuxiliar || "racha_50_50",
+              valorAuxiliar: dbConfig.regraPadrao.valorAuxiliar ?? 0
+            });
+          } else if (dbConfig.percentual_padrao !== undefined) {
+            setRegraPadrao(prev => ({
+              ...prev,
+              percentualTecnico: Number(dbConfig.percentual_padrao || 20),
+              baseCalculo: dbConfig.base_calculo || "faturamento_total"
+            }));
+          }
+        } else {
+          // Sync default config to DB
+          const defaultConfig = {
+            modo_calculo: "REGRA_MAIS_ESPECIFICA",
+            status_os: "CONCLUIDA",
+            regraPadrao: { percentualTecnico: 20, baseCalculo: "faturamento_total" as const }
           };
-          setRegraPadrao(migratedRegraPadrao);
+          API.comissaoConfig.salvar(defaultConfig);
         }
-        
-        // Handle migration from old format
-        if (parsed.regrasEntrega && (!parsed.regrasAtendimento || parsed.regrasAtendimento.length === 0)) {
-          const migrated = parsed.regrasEntrega.map((r: any) => ({
-            tipo: r.tipo,
-            baseCalculo: "fixo" as const,
-            valorTecnico: parseFloat(r.valor) || 0,
-            regraAuxiliar: "racha_50_50" as const,
-            valorAuxiliar: 0
-          }));
-          setRegrasAtendimento(migrated);
-        } else if (parsed.regrasAtendimento && parsed.regrasAtendimento.length > 0) {
-          const loaded = parsed.regrasAtendimento.map((r: any) => ({
-            ...r,
-            baseCalculo: r.baseCalculo
-          }));
-          // Merge defaults with loaded rules so standard rules are always present alongside custom user rules
+
+        if (dbRegras && dbRegras.length > 0) {
           const merged = [...DEFAULT_REGRAS_ATENDIMENTO];
-          loaded.forEach((userRule: any) => {
+          dbRegras.forEach((userRule: any) => {
             const idx = merged.findIndex(r => r.tipo.toLowerCase().trim() === userRule.tipo.toLowerCase().trim());
             if (idx >= 0) {
               merged[idx] = userRule;
@@ -122,36 +161,60 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
           });
           setRegrasAtendimento(merged);
         } else {
-          setRegrasAtendimento(DEFAULT_REGRAS_ATENDIMENTO);
+          // Check localstorage or use defaults
+          const savedConfig = localStorage.getItem("gst_comissoes_config");
+          let initialRegras = DEFAULT_REGRAS_ATENDIMENTO;
+          if (savedConfig) {
+            try {
+              const parsed = JSON.parse(savedConfig);
+              if (parsed.regrasAtendimento && parsed.regrasAtendimento.length > 0) {
+                initialRegras = parsed.regrasAtendimento;
+              }
+            } catch (e) {}
+          }
+          setRegrasAtendimento(initialRegras);
+          // Sync rules to Supabase!
+          API.comissaoRegras.sincronizar(initialRegras);
         }
       } catch (e) {
+        console.error("Erro ao carregar regras/config do banco:", e);
         setRegrasAtendimento(DEFAULT_REGRAS_ATENDIMENTO);
       }
-    } else {
-      setRegrasAtendimento(DEFAULT_REGRAS_ATENDIMENTO);
-    }
+    };
+    fetchConfigAndRegras();
 
     // Load Cost Centers
-    const savedCentros = localStorage.getItem("gst_centros_custo");
-    if (savedCentros) {
+    const fetchCentros = async () => {
       try {
-        setCentrosCusto(JSON.parse(savedCentros));
+        const list = await API.centrosCusto.listar();
+        if (list && list.length > 0) {
+          setCentrosCusto(list);
+        } else {
+          const savedCentros = localStorage.getItem("gst_centros_custo");
+          if (savedCentros) {
+            const parsed = JSON.parse(savedCentros);
+            setCentrosCusto(parsed);
+            API.centrosCusto.sincronizar(parsed);
+          } else {
+            const defaultCentros = [
+              "Oficina",
+              "PDI / Entrega Técnica",
+              "Pós-Vendas",
+              "Comercial / Vendas",
+              "Frota / Veículos",
+              "Administrativo",
+              "Garantia Fabricante"
+            ];
+            setCentrosCusto(defaultCentros);
+            localStorage.setItem("gst_centros_custo", JSON.stringify(defaultCentros));
+            API.centrosCusto.sincronizar(defaultCentros);
+          }
+        }
       } catch (e) {
-        // ignore
+        console.error("Erro ao listar centros de custo:", e);
       }
-    } else {
-      const defaultCentros = [
-        "Oficina",
-        "PDI / Entrega Técnica",
-        "Pós-Vendas",
-        "Comercial / Vendas",
-        "Frota / Veículos",
-        "Administrativo",
-        "Garantia Fabricante"
-      ];
-      setCentrosCusto(defaultCentros);
-      localStorage.setItem("gst_centros_custo", JSON.stringify(defaultCentros));
-    }
+    };
+    fetchCentros();
 
     // Load active atendimento types from API
     const fetchTipos = async () => {
@@ -163,11 +226,161 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
       }
     };
     fetchTipos();
+
+    // Load technicians and metas from API
+    const fetchMetasETecnicos = async () => {
+      try {
+        const [tecs, listMetas] = await Promise.all([
+          API.tecnicos.listar(),
+          API.comissaoMetas.listar()
+        ]);
+        setTecnicos(tecs.filter(t => t.ativo !== false));
+        setMetas(listMetas);
+      } catch (e) {
+        console.error("Erro ao listar metas/técnicos:", e);
+      }
+    };
+    fetchMetasETecnicos();
+
+    // Load faixas de comissão from API
+    const fetchFaixas = async () => {
+      try {
+        const listFaixas = await API.comissaoFaixas.listar();
+        setFaixas(listFaixas);
+      } catch (e) {
+        console.error("Erro ao listar faixas de comissão:", e);
+      }
+    };
+    fetchFaixas();
   }, []);
 
   const showToast = (text: string, type: "success" | "error" = "success") => {
     setToast({ text, type });
     setTimeout(() => setToast(null), 3500);
+  };
+
+  const handleSaveFaixa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!faixaNome.trim()) {
+      showToast("Informe o nome ou identificação da faixa de comissão.", "error");
+      return;
+    }
+    try {
+      const payload = {
+        id: editingFaixaId || undefined,
+        nome: faixaNome,
+        valor_inicial: Number(faixaValorInicial || 0),
+        valor_final: faixaValorFinal ? Number(faixaValorFinal) : null,
+        percentual: Number(faixaPercentual || 0),
+        bonus_fixo: Number(faixaBonusFixo || 0),
+        ativo: true
+      };
+      const saved = await API.comissaoFaixas.salvar(payload);
+      if (editingFaixaId) {
+        setFaixas(faixas.map(f => String(f.id) === String(editingFaixaId) ? saved : f));
+        showToast("Faixa de comissão atualizada com sucesso!");
+      } else {
+        setFaixas([...faixas, saved]);
+        showToast("Nova faixa de comissão cadastrada com sucesso!");
+      }
+      setFaixaNome("");
+      setFaixaValorInicial("");
+      setFaixaValorFinal("");
+      setFaixaPercentual("");
+      setFaixaBonusFixo("");
+      setEditingFaixaId(null);
+    } catch (err) {
+      showToast("Erro ao salvar faixa de comissão.", "error");
+    }
+  };
+
+  const handleEditFaixa = (f: any) => {
+    setEditingFaixaId(f.id);
+    setFaixaNome(f.nome || "");
+    setFaixaValorInicial(f.valor_inicial !== undefined && f.valor_inicial !== null ? String(f.valor_inicial) : "");
+    setFaixaValorFinal(f.valor_final !== undefined && f.valor_final !== null ? String(f.valor_final) : "");
+    setFaixaPercentual(f.percentual !== undefined && f.percentual !== null ? String(f.percentual) : "");
+    setFaixaBonusFixo(f.bonus_fixo !== undefined && f.bonus_fixo !== null ? String(f.bonus_fixo) : "");
+  };
+
+  const handleDeleteFaixa = async (id: number | string) => {
+    if (!confirm("Tem certeza que deseja excluir esta faixa de comissão?")) return;
+    try {
+      await API.comissaoFaixas.excluir(id);
+      setFaixas(faixas.filter(f => String(f.id) !== String(id)));
+      showToast("Faixa excluída com sucesso!");
+    } catch (err) {
+      showToast("Erro ao excluir faixa.", "error");
+    }
+  };
+
+  const handleSaveMeta = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!metaTecnicoId) {
+      showToast("Selecione um técnico para cadastrar a meta.", "error");
+      return;
+    }
+    if (!metaFaturamento || Number(metaFaturamento) < 0) {
+      showToast("Informe o valor da Meta de Faturamento.", "error");
+      return;
+    }
+
+    try {
+      const payload = {
+        id: editingMetaId || undefined,
+        tecnico_id: Number(metaTecnicoId),
+        ano: Number(metaAno),
+        mes: Number(metaMes),
+        meta_faturamento: parseFloat(metaFaturamento) || 0,
+        meta_comissao: parseFloat(metaComissao) || 0,
+        observacao: metaObservacao,
+        ativo: true
+      };
+
+      await API.comissaoMetas.salvar(payload);
+      
+      const updatedMetas = await API.comissaoMetas.listar();
+      setMetas(updatedMetas);
+
+      setMetaTecnicoId("");
+      setMetaFaturamento("");
+      setMetaComissao("");
+      setMetaObservacao("");
+      setEditingMetaId(null);
+
+      showToast("Meta de faturamento e comissão salva com sucesso!", "success");
+    } catch (err) {
+      showToast("Erro ao salvar meta.", "error");
+    }
+  };
+
+  const handleEditMeta = (item: any) => {
+    setEditingMetaId(item.id);
+    setMetaTecnicoId(String(item.tecnico_id));
+    setMetaAno(Number(item.ano));
+    setMetaMes(Number(item.mes));
+    setMetaFaturamento(String(item.meta_faturamento || 0));
+    setMetaComissao(String(item.meta_comissao || 0));
+    setMetaObservacao(item.observacao || "");
+  };
+
+  const handleDeleteMeta = async (id: number | string) => {
+    try {
+      await API.comissaoMetas.excluir(id);
+      const updatedMetas = await API.comissaoMetas.listar();
+      setMetas(updatedMetas);
+      showToast("Meta removida com sucesso.", "success");
+    } catch (err) {
+      showToast("Erro ao excluir meta.", "error");
+    }
+  };
+
+  const handleCancelMetaEdit = () => {
+    setEditingMetaId(null);
+    setMetaTecnicoId("");
+    setMetaFaturamento("");
+    setMetaComissao("");
+    setMetaObservacao("");
   };
 
   const handleAddAtendimentoRule = (e: React.FormEvent) => {
@@ -215,22 +428,32 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
     showToast("Regra removida da tabela.", "success");
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const config = {
+      modo_calculo: modoCalculo,
+      status_os: statusOS,
       regraPadrao,
       regrasAtendimento
     };
     localStorage.setItem("gst_comissoes_config", JSON.stringify(config));
     localStorage.setItem("gst_centros_custo", JSON.stringify(centrosCusto));
     
+    try {
+      await API.comissaoConfig.salvar(config);
+      await API.comissaoRegras.sincronizar(regrasAtendimento);
+      await API.centrosCusto.sincronizar(centrosCusto);
+    } catch (err) {
+      console.warn("Erro ao salvar regras no banco de dados:", err);
+    }
+
     // Dispatch events to update comissoes list if any other views are open
     window.dispatchEvent(new Event("comissoes_config_updated"));
     window.dispatchEvent(new Event("centros_custo_updated"));
-    showToast("Configurações gerais salvas com sucesso!");
+    showToast("Configurações gerais e regras salvas e sincronizadas com sucesso!");
   };
 
-  const handleAddCentroCusto = (e: React.FormEvent) => {
+  const handleAddCentroCusto = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = novoCentroCusto.trim();
     if (!clean) return;
@@ -242,14 +465,28 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
     setCentrosCusto(updated);
     setNovoCentroCusto("");
     localStorage.setItem("gst_centros_custo", JSON.stringify(updated));
+
+    try {
+      await API.centrosCusto.salvar(clean);
+    } catch (err) {
+      console.warn("Erro ao salvar centro de custo no banco:", err);
+    }
+
     showToast("Centro de Custo adicionado!", "success");
     window.dispatchEvent(new Event("centros_custo_updated"));
   };
 
-  const handleRemoveCentroCusto = (item: string) => {
+  const handleRemoveCentroCusto = async (item: string) => {
     const updated = centrosCusto.filter(c => c !== item);
     setCentrosCusto(updated);
     localStorage.setItem("gst_centros_custo", JSON.stringify(updated));
+
+    try {
+      await API.centrosCusto.excluir(item);
+    } catch (err) {
+      console.warn("Erro ao excluir centro de custo no banco:", err);
+    }
+
     showToast("Centro de Custo removido com sucesso.", "success");
     window.dispatchEvent(new Event("centros_custo_updated"));
   };
@@ -274,19 +511,135 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
         </div>
       </div>
 
+      {/* Navegação de Abas */}
+      <div className="flex flex-wrap border-b border-gray-200 bg-white rounded-xl border p-1.5 shadow-sm gap-1">
+        <button
+          type="button"
+          onClick={() => setActiveTab("regras")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all ${
+            activeTab === "regras"
+              ? "bg-brand-red text-white shadow-sm font-black"
+              : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+          }`}
+        >
+          <Coins className="w-4 h-4" />
+          Regras & Parâmetros de Comissão
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("metas")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all ${
+            activeTab === "metas"
+              ? "bg-brand-red text-white shadow-sm font-black"
+              : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+          }`}
+        >
+          <Target className="w-4 h-4" />
+          Metas de Faturamento & Comissão
+          {metas.length > 0 && (
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold ${
+              activeTab === "metas" ? "bg-white/20 text-white" : "bg-gray-200 text-gray-700"
+            }`}>
+              {metas.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("faixas")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all ${
+            activeTab === "faixas"
+              ? "bg-brand-red text-white shadow-sm font-black"
+              : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          Faixas de Comissão por Faturamento
+          {faixas.length > 0 && (
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold ${
+              activeTab === "faixas" ? "bg-white/20 text-white" : "bg-gray-200 text-gray-700"
+            }`}>
+              {faixas.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("centros")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all ${
+            activeTab === "centros"
+              ? "bg-brand-red text-white shadow-sm font-black"
+              : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+          }`}
+        >
+          <Settings className="w-4 h-4" />
+          Centros de Custo (Débito Interno)
+        </button>
+      </div>
+
       <form onSubmit={handleSave} className="space-y-6">
         
-        {/* SECÇÃO 1: REGRA PADRÃO (VENDAS / FATURADO) */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-gray-150 bg-gray-50/50">
-            <h2 className="font-display text-base font-extrabold uppercase text-gray-800 flex items-center gap-2">
-              <Coins className="text-brand-red w-5 h-5" />
-              Regra Padrão de Comissionamento (Vendas / Faturado)
-            </h2>
-            <p className="text-xs text-gray-400 font-semibold mt-0.5">
-              Aplicada automaticamente para ordens de serviço faturadas que não se enquadram em regras específicas.
-            </p>
-          </div>
+        {/* SECÇÃO 1 & 2: REGRAS E PARÂMETROS */}
+        {activeTab === "regras" && (
+          <>
+            {/* CONFIGURAÇÕES DE MODULO E MODO DE CÁLCULO */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden p-6 space-y-4">
+              <div className="border-b border-gray-150 pb-3">
+                <h2 className="font-display text-base font-extrabold uppercase text-gray-800 flex items-center gap-2">
+                  <Sliders className="text-brand-red w-5 h-5" />
+                  Modo de Cálculo & Gatilhos do Sistema (comissao_config)
+                </h2>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  Define a lógica global do motor de comissões e em qual etapa da Ordem de Serviço os valores são liberados no banco de dados.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase tracking-wider block mb-1.5">
+                    Modo de Aplicação de Cálculo (<code className="text-brand-red">modo_calculo</code>)
+                  </label>
+                  <select
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={modoCalculo}
+                    onChange={(e) => setModoCalculo(e.target.value)}
+                  >
+                    <option value="REGRA_MAIS_ESPECIFICA">REGRA_MAIS_ESPECIFICA — Priorizar Regras por Tipo de Atendimento</option>
+                    <option value="MAIOR_COMISSAO">MAIOR_COMISSAO — Aplicar o Maior Valor entre Regra Específica e Padrão</option>
+                    <option value="APENAS_PADRAO">APENAS_PADRAO — Ignorar Exceções e Usar Apenas Percentual Padrão</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase tracking-wider block mb-1.5">
+                    Gatilho de Liberação da Comissão (<code className="text-brand-red">status_os</code>)
+                  </label>
+                  <select
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={statusOS}
+                    onChange={(e) => setStatusOS(e.target.value)}
+                  >
+                    <option value="CONCLUIDA">CONCLUIDA — Liberar ao Finalizar Atendimento na O.S.</option>
+                    <option value="FATURADA">FATURADA — Liberar Apenas Após Faturamento do Financeiro</option>
+                    <option value="TODAS">TODAS — Liberar Comissão Automaticamente em Qualquer Status</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-150 bg-gray-50/50">
+                <h2 className="font-display text-base font-extrabold uppercase text-gray-800 flex items-center gap-2">
+                  <Coins className="text-brand-red w-5 h-5" />
+                  Regra Padrão de Comissionamento (Vendas / Faturado)
+                </h2>
+                <p className="text-xs text-gray-400 font-semibold mt-0.5">
+                  Aplicada automaticamente para ordens de serviço faturadas que não se enquadram em regras específicas.
+                </p>
+              </div>
 
           <div className="p-6 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -704,21 +1057,13 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
 
           </div>
         </div>
+        </>
+        )}
 
         {/* SECÇÃO 3: CADASTRO DE CENTROS DE CUSTO */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-gray-150 bg-gray-50/50">
-            <h2 className="font-display text-base font-extrabold uppercase text-gray-800 flex items-center gap-2">
-              <Settings className="text-brand-red w-5 h-5" />
-              Cadastro de Centros de Custo (Débito Interno)
-            </h2>
-            <p className="text-xs text-gray-400 font-semibold mt-0.5">
-              Defina e gerencie os centros de custo disponíveis para seleção nas Ordens de Serviço de Débito Interno.
-            </p>
-          </div>
-
-          <div className="p-6 space-y-6">
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200/60 max-w-xl">
+        {activeTab === "centros" && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden p-6 space-y-6">
+          <div className="bg-gray-50 p-4 rounded-xl border border-gray-200/60 max-w-xl">
               <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block mb-2">Novo Centro de Custo</label>
               <div className="flex gap-2">
                 <input
@@ -768,21 +1113,396 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
                 )}
               </div>
             </div>
-          </div>
         </div>
+        )}
+
+        {/* SECÇÃO 4: CADASTRO E GESTÃO DE METAS DE COMISSÃO E FATURAMENTO */}
+        {activeTab === "metas" && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden p-6 space-y-6">
+            {/* Form Cadastrar / Editar Meta */}
+            <div className="bg-gray-50 border border-gray-150 p-4 rounded-xl space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-gray-700 flex items-center gap-1.5">
+                {editingMetaId ? <Edit3 className="w-4 h-4 text-amber-600" /> : <Plus className="w-4 h-4 text-brand-red" />}
+                {editingMetaId ? "Editar Meta Cadastrada" : "Cadastrar Nova Meta para Técnico"}
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                {/* Técnico */}
+                <div className="md:col-span-3">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Técnico</label>
+                  <select
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={metaTecnicoId}
+                    onChange={(e) => setMetaTecnicoId(e.target.value)}
+                  >
+                    <option value="">-- Selecionar Técnico --</option>
+                    {tecnicos.map(t => (
+                      <option key={t.id} value={t.id}>{t.nome} {t.apelido ? `(${t.apelido})` : ""}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Ano */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Ano</label>
+                  <select
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={metaAno}
+                    onChange={(e) => setMetaAno(Number(e.target.value))}
+                  >
+                    {[2024, 2025, 2026, 2027, 2028].map(a => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Mês */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Mês</label>
+                  <select
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={metaMes}
+                    onChange={(e) => setMetaMes(Number(e.target.value))}
+                  >
+                    {[
+                      { v: 1, label: "Janeiro" },
+                      { v: 2, label: "Fevereiro" },
+                      { v: 3, label: "Março" },
+                      { v: 4, label: "Abril" },
+                      { v: 5, label: "Maio" },
+                      { v: 6, label: "Junho" },
+                      { v: 7, label: "Julho" },
+                      { v: 8, label: "Agosto" },
+                      { v: 9, label: "Setembro" },
+                      { v: 10, label: "Outubro" },
+                      { v: 11, label: "Novembro" },
+                      { v: 12, label: "Dezembro" }
+                    ].map(m => (
+                      <option key={m.v} value={m.v}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Meta Faturamento */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Meta Faturamento (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="25000,00"
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={metaFaturamento}
+                    onChange={(e) => setMetaFaturamento(e.target.value)}
+                  />
+                </div>
+
+                {/* Meta Comissão */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Meta Comissão (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="3000,00"
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={metaComissao}
+                    onChange={(e) => setMetaComissao(e.target.value)}
+                  />
+                </div>
+
+                {/* Botões */}
+                <div className="md:col-span-1 flex gap-1">
+                  <button
+                    type="button"
+                    onClick={handleSaveMeta}
+                    className="flex-1 bg-brand-red hover:bg-brand-red-dark text-white rounded-lg py-2 flex items-center justify-center font-bold text-xs shadow-sm transition-all h-[36px]"
+                    title="Salvar Meta"
+                  >
+                    {editingMetaId ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  </button>
+                  {editingMetaId && (
+                    <button
+                      type="button"
+                      onClick={handleCancelMetaEdit}
+                      className="bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg px-2 py-2 font-bold text-xs transition-all h-[36px]"
+                      title="Cancelar Edição"
+                    >
+                      X
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Observação */}
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Observação / Anotação (Opcional)</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Inclui bonificação por atingimento de 100% no mês de safra"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-800 bg-white"
+                  value={metaObservacao}
+                  onChange={(e) => setMetaObservacao(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Tabela de Metas Cadastradas */}
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 text-gray-500 uppercase font-bold text-[10px] tracking-wider border-b border-gray-200">
+                  <tr>
+                    <th className="p-3 text-left">Técnico</th>
+                    <th className="p-3 text-center">Período (Ano/Mês)</th>
+                    <th className="p-3 text-right">Meta Faturamento (R$)</th>
+                    <th className="p-3 text-right">Meta Comissão (R$)</th>
+                    <th className="p-3 text-left">Observação</th>
+                    <th className="p-3 w-24 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {metas.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-gray-400 font-semibold">
+                        Nenhuma meta cadastrada até o momento. Utilize o formulário acima para registrar metas por técnico.
+                      </td>
+                    </tr>
+                  ) : (
+                    metas.map((item) => {
+                      const tecObj = tecnicos.find(t => Number(t.id) === Number(item.tecnico_id)) || item.tecnicos;
+                      const nomeTec = tecObj ? tecObj.nome : `Técnico #${item.tecnico_id}`;
+                      const nomesMeses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+                      const labelMes = nomesMeses[item.mes - 1] || item.mes;
+
+                      return (
+                        <tr key={item.id} className="hover:bg-gray-50/50">
+                          <td className="p-3 text-gray-900 font-bold uppercase">{nomeTec}</td>
+                          <td className="p-3 text-center font-mono font-semibold text-gray-700">
+                            {labelMes} / {item.ano}
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold text-emerald-700">
+                            R$ {Number(item.meta_faturamento || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold text-brand-red">
+                            R$ {Number(item.meta_comissao || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-3 text-gray-600 font-medium truncate max-w-[200px]" title={item.observacao}>
+                            {item.observacao || "-"}
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleEditMeta(item)}
+                                className="text-gray-600 hover:text-brand-red p-1 hover:bg-gray-100 rounded transition-all"
+                                title="Editar Meta"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMeta(item.id)}
+                                className="text-rose-500 hover:text-rose-700 p-1 hover:bg-rose-50 rounded transition-all"
+                                title="Excluir Meta"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+        </div>
+        )}
+
+        {/* SECÇÃO: CADASTRO E GESTÃO DE FAIXAS DE COMISSÃO */}
+        {activeTab === "faixas" && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden p-6 space-y-6">
+            {/* Form Cadastrar / Editar Faixa */}
+            <div className="bg-gray-50 border border-gray-150 p-4 rounded-xl space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-gray-700 flex items-center gap-1.5">
+                {editingFaixaId ? <Edit3 className="w-4 h-4 text-amber-600" /> : <Plus className="w-4 h-4 text-brand-red" />}
+                {editingFaixaId ? "Editar Faixa de Comissão" : "Cadastrar Nova Faixa de Comissão por Faturamento"}
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                {/* Nome / Identificação */}
+                <div className="md:col-span-3">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Identificação / Nome</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Nível 1 - Inicial, Bronze, Ouro..."
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={faixaNome}
+                    onChange={(e) => setFaixaNome(e.target.value)}
+                  />
+                </div>
+
+                {/* Valor Inicial */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">De (Faturamento R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0,00"
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={faixaValorInicial}
+                    onChange={(e) => setFaixaValorInicial(e.target.value)}
+                  />
+                </div>
+
+                {/* Valor Final */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Até (R$ / Vazio = Sem Limite)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Ex: 50000,00"
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={faixaValorFinal}
+                    onChange={(e) => setFaixaValorFinal(e.target.value)}
+                  />
+                </div>
+
+                {/* Percentual */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Comissão (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Ex: 5,00"
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={faixaPercentual}
+                    onChange={(e) => setFaixaPercentual(e.target.value)}
+                  />
+                </div>
+
+                {/* Bônus Fixo */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1">Bônus Fixo (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Ex: 500,00"
+                    className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-bold text-gray-800 bg-white"
+                    value={faixaBonusFixo}
+                    onChange={(e) => setFaixaBonusFixo(e.target.value)}
+                  />
+                </div>
+
+                {/* Botoes */}
+                <div className="md:col-span-1 flex gap-1">
+                  <button
+                    type="button"
+                    onClick={handleSaveFaixa}
+                    className="w-full bg-brand-red hover:bg-brand-red-dark text-white text-xs font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1 shadow-sm"
+                  >
+                    {editingFaixaId ? "Atualizar" : "Salvar"}
+                  </button>
+                  {editingFaixaId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingFaixaId(null);
+                        setFaixaNome("");
+                        setFaixaValorInicial("");
+                        setFaixaValorFinal("");
+                        setFaixaPercentual("");
+                        setFaixaBonusFixo("");
+                      }}
+                      className="bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-bold px-2.5 py-2 rounded-lg transition-all"
+                      title="Cancelar edição"
+                    >
+                      X
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Tabela de Faixas Cadastradas */}
+            <div className="overflow-x-auto border border-gray-200 rounded-xl">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-black text-gray-500 uppercase tracking-wider">
+                    <th className="p-3">Identificação / Nome</th>
+                    <th className="p-3">Intervalo de Faturamento</th>
+                    <th className="p-3">Percentual (%)</th>
+                    <th className="p-3">Bônus Fixo</th>
+                    <th className="p-3 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-150 text-xs font-medium text-gray-700">
+                  {faixas.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-gray-400 bg-gray-50/50">
+                        Nenhuma faixa de comissão cadastrada. Preencha os campos acima para cadastrar.
+                      </td>
+                    </tr>
+                  ) : (
+                    faixas.map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50/80 transition-all">
+                        <td className="p-3 font-bold text-gray-900">
+                          {item.nome}
+                        </td>
+                        <td className="p-3 font-semibold text-gray-700">
+                          R$ {Number(item.valor_inicial || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          {" até "}
+                          {item.valor_final !== null && item.valor_final !== undefined
+                            ? `R$ ${Number(item.valor_final).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+                            : "Sem limite (Acima de)"}
+                        </td>
+                        <td className="p-3 font-bold text-brand-red">
+                          {Number(item.percentual || 0).toFixed(2)}%
+                        </td>
+                        <td className="p-3 font-bold text-emerald-600">
+                          R$ {Number(item.bonus_fixo || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleEditFaixa(item)}
+                              className="text-gray-500 hover:text-gray-800 p-1 hover:bg-gray-100 rounded transition-all"
+                              title="Editar Faixa"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteFaixa(item.id)}
+                              className="text-rose-500 hover:text-rose-700 p-1 hover:bg-rose-50 rounded transition-all"
+                              title="Excluir Faixa"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+        </div>
+        )}
 
         {/* Global Save Action */}
-        <div className="flex items-center justify-between p-5 bg-gray-50 border border-gray-200 rounded-xl">
-          <p className="text-[11px] text-gray-500 font-semibold leading-relaxed max-w-lg">
-            As alterações acima são aplicadas em tempo real aos cálculos das comissões de todas as ordens de serviço finalizadas no sistema. Certifique-se de salvar para persistir suas modificações de forma permanente.
-          </p>
-          <button
-            type="submit"
-            className="btn bg-brand-red hover:bg-brand-red-dark text-white text-xs font-black uppercase tracking-wider h-11 px-8 rounded-lg shadow-md flex items-center gap-2"
-          >
-            Salvar Configurações Gerais
-          </button>
-        </div>
+        {activeTab === "regras" && (
+          <div className="flex items-center justify-between p-5 bg-gray-50 border border-gray-200 rounded-xl">
+            <p className="text-[11px] text-gray-500 font-semibold leading-relaxed max-w-lg">
+              As alterações acima são aplicadas em tempo real aos cálculos das comissões de todas as ordens de serviço finalizadas no sistema. Certifique-se de salvar para persistir suas modificações de forma permanente.
+            </p>
+            <button
+              type="submit"
+              className="btn bg-brand-red hover:bg-brand-red-dark text-white text-xs font-black uppercase tracking-wider h-11 px-8 rounded-lg shadow-md flex items-center gap-2"
+            >
+              Salvar Configurações Gerais
+            </button>
+          </div>
+        )}
 
       </form>
     </div>

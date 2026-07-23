@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Building, CheckCircle2, AlertCircle } from "lucide-react";
+import { Building, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { API } from "../lib/api";
 
 export const EmpresaView: React.FC = () => {
   const [companyNome, setCompanyNome] = useState("");
@@ -10,25 +11,24 @@ export const EmpresaView: React.FC = () => {
   const [companyEmail, setCompanyEmail] = useState("");
   const [companyIE, setCompanyIE] = useState("");
   const [companyLogo, setCompanyLogo] = useState("");
+  const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   useEffect(() => {
-    const savedCompany = localStorage.getItem("gst_company_config_v1");
-    if (savedCompany) {
-      try {
-        const parsed = JSON.parse(savedCompany);
+    async function loadCompanyData() {
+      const parsed = await API.empresa.obter();
+      if (parsed) {
         setCompanyNome(parsed.nome || "");
         setCompanySubtitulo(parsed.subtitulo || "");
         setCompanyEndereco(parsed.endereco || "");
         setCompanyTelefone(parsed.telefone || "");
         setCompanyCnpj(parsed.cnpj || "");
         setCompanyEmail(parsed.email || "");
-        setCompanyIE(parsed.inscricao_estadual || "");
+        setCompanyIE(parsed.inscricao_estadual || parsed.ie || "");
         setCompanyLogo(parsed.logo || "");
-      } catch (e) {
-        // ignore
       }
     }
+    loadCompanyData();
   }, []);
 
   const showToast = (text: string, type: "success" | "error" = "success") => {
@@ -47,9 +47,11 @@ export const EmpresaView: React.FC = () => {
     }
   };
 
-  const handleSaveCompany = (e: React.FormEvent) => {
+  const handleSaveCompany = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaving(true);
     const config = {
+      id: 1,
       nome: companyNome,
       subtitulo: companySubtitulo,
       endereco: companyEndereco,
@@ -59,10 +61,15 @@ export const EmpresaView: React.FC = () => {
       inscricao_estadual: companyIE,
       logo: companyLogo
     };
-    localStorage.setItem("gst_company_config_v1", JSON.stringify(config));
     
-    window.dispatchEvent(new Event("company_config_updated"));
-    showToast("Configurações da empresa salvas com sucesso!");
+    try {
+      await API.empresa.salvar(config);
+      showToast("Configurações da empresa salvas e sincronizadas no Supabase com sucesso!");
+    } catch (err) {
+      showToast("Salvo localmente. Erro ao sincronizar com Supabase.", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -226,9 +233,11 @@ export const EmpresaView: React.FC = () => {
           <div className="flex items-center justify-end pt-4 border-t border-gray-150">
             <button
               type="submit"
-              className="btn bg-brand-red hover:bg-brand-red-dark text-white text-xs font-black uppercase tracking-wider h-11 px-8 rounded-lg shadow-md flex items-center gap-2"
+              disabled={saving}
+              className="btn bg-brand-red hover:bg-brand-red-dark disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider h-11 px-8 rounded-lg shadow-md flex items-center gap-2 transition-all"
             >
-              Salvar Configurações
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              {saving ? "Salvando..." : "Salvar Configurações"}
             </button>
           </div>
         </form>

@@ -82,35 +82,6 @@ export const PRESET_USUARIOS: Usuario[] = [
       comissoes: { consultar: true, editar: true, excluir: true }
     },
     ultimo_acesso: "Hoje, 10:35"
-  },
-  {
-    id: "usr_2",
-    nome: "Amanda Costa",
-    usuario: "amanda.faturamento",
-    email: "faturamento@oficina.com.br",
-    perfil: "FATURISTA",
-    ativo: true,
-    senha: "123",
-    permissoes: {
-      ...DEFAULT_PERMISSIONS,
-      os: { consultar: true, editar: true, excluir: false },
-      financeiro: { consultar: true, editar: true, excluir: false }
-    },
-    ultimo_acesso: "Ontem, 16:40"
-  },
-  {
-    id: "usr_3",
-    nome: "Marcos Souza (Mecânico Líder)",
-    usuario: "marcos.mecanico",
-    email: "marcos.campo@oficina.com.br",
-    perfil: "TECNICO",
-    ativo: true,
-    senha: "123",
-    permissoes: {
-      ...DEFAULT_PERMISSIONS,
-      os: { consultar: true, editar: true, excluir: false }
-    },
-    ultimo_acesso: "Hoje, 07:15"
   }
 ];
 

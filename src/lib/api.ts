@@ -41,6 +41,34 @@ function cleanTimeVal(v: any): string | null {
   return null;
 }
 
+function extractMissingColumn(errorMessage: string, payload: Record<string, any>): string | null {
+  if (!errorMessage || !payload) return null;
+  const msgLower = String(errorMessage).toLowerCase();
+
+  for (const key of Object.keys(payload)) {
+    const keyLower = key.toLowerCase();
+    if (
+      msgLower.includes(`'${keyLower}'`) ||
+      msgLower.includes(`"${keyLower}"`) ||
+      msgLower.includes(`.${keyLower}`) ||
+      msgLower.includes(` ${keyLower} `) ||
+      msgLower.includes(`column ${keyLower}`) ||
+      msgLower.includes(`column "${keyLower}"`) ||
+      msgLower.includes(`column '${keyLower}'`)
+    ) {
+      return key;
+    }
+  }
+
+  const postgrestMatch = errorMessage.match(/find the ['"](.*?)['"] column/i) || errorMessage.match(/['"](.*?)['"] column/i) || errorMessage.match(/column ['"](.*?)['"]/i);
+  if (postgrestMatch?.[1]) {
+    const matchedKey = Object.keys(payload).find(k => k.toLowerCase() === postgrestMatch[1].toLowerCase());
+    if (matchedKey) return matchedKey;
+  }
+
+  return null;
+}
+
 function sanitizeClientePayload(c: any): any {
   const cpfCnpj = c.cpf_cnpj ? String(c.cpf_cnpj).trim().substring(0, 20) : "";
   let codSankhya = c.codigo_sankhya ? String(c.codigo_sankhya).trim().substring(0, 20) : "";
@@ -133,41 +161,6 @@ const INITIAL_USUARIOS: Usuario[] = [
       comissoes: { consultar: true, editar: true, excluir: true }
     },
     ultimo_acesso: "Hoje, 10:35"
-  },
-  {
-    id: "usr_2",
-    nome: "Amanda Costa",
-    usuario: "amanda.faturamento",
-    email: "faturamento@oficina.com.br",
-    perfil: "FATURISTA",
-    ativo: true,
-    senha: "123",
-    permissoes: {
-      ...DEFAULT_PERMISSIONS_LOCAL,
-      os: { consultar: true, editar: true, excluir: false },
-      financeiro: { consultar: true, editar: true, excluir: false },
-      tecnicos: { consultar: true, editar: true, excluir: false },
-      tipos_atendimento: { consultar: true, editar: true, excluir: false },
-      comissoes: { consultar: true, editar: true, excluir: false }
-    },
-    ultimo_acesso: "Ontem, 16:40"
-  },
-  {
-    id: "usr_3",
-    nome: "Marcos Souza (Mecânico Líder)",
-    usuario: "marcos.mecanico",
-    email: "marcos.campo@oficina.com.br",
-    perfil: "TECNICO",
-    ativo: true,
-    senha: "123",
-    permissoes: {
-      ...DEFAULT_PERMISSIONS_LOCAL,
-      os: { consultar: true, editar: true, excluir: false },
-      tecnicos: { consultar: true, editar: true, excluir: false },
-      tipos_atendimento: { consultar: true, editar: true, excluir: false },
-      comissoes: { consultar: true, editar: true, excluir: false }
-    },
-    ultimo_acesso: "Hoje, 07:15"
   }
 ];
 
@@ -202,6 +195,43 @@ const INITIAL_REVISOES: PlanoRevisao[] = [
 export const API = {
   clientes: {
     async listar(): Promise<Cliente[]> {
+      const saved = localStorage.getItem("gst_clientes");
+      if (saved) {
+        try {
+          let allData: Cliente[] = [];
+          let hasMore = true;
+          let start = 0;
+          const step = 1000;
+
+          while (hasMore) {
+            const { data, error } = await supabase
+              .from("clientes")
+              .select("*")
+              .order("razao_social")
+              .range(start, start + step - 1);
+            
+            if (error) throw error;
+            
+            if (data && data.length > 0) {
+              allData = [...allData, ...data];
+              start += step;
+              if (data.length < step) {
+                hasMore = false;
+              }
+            } else {
+              hasMore = false;
+            }
+          }
+          if (allData.length > 0) {
+            localStorage.setItem("gst_clientes", JSON.stringify(allData));
+            return allData;
+          }
+        } catch (e) {
+          console.warn("Supabase fetch clients error, using local data:", e);
+        }
+        return JSON.parse(saved);
+      }
+
       try {
         let allData: Cliente[] = [];
         let hasMore = true;
@@ -228,10 +258,34 @@ export const API = {
           }
         }
         
+        localStorage.setItem("gst_clientes", JSON.stringify(allData));
         return allData;
       } catch (err) {
-        console.error("ERRO SUPABASE LISTAR CLIENTES:", err);
-        throw err;
+        console.warn("Falling back to simulated clients...", err);
+        const initial: Cliente[] = [
+          {
+            id: 1,
+            codigo_sankhya: '1',
+            razao_social: 'DANIEL TRATORES AGRICOLA LTDA',
+            nome_fantasia: 'DANIEL TRATORES AGRICOLA',
+            cpf_cnpj: '11.994.044/0001-09',
+            inscricao_estadual: '3067351',
+            tipo_pessoa: 'J',
+            ativo: true,
+            cep: '76877225',
+            endereco: 'BR-364',
+            numero: '3949',
+            complemento: '',
+            bairro: 'INDUSTRIAL JAMARI',
+            cidade: 'ARIQUEMES',
+            uf: 'RO',
+            telefone: '(069) 3535-4633',
+            celular: '',
+            email: 'contato@dtagricola.com.br'
+          }
+        ];
+        localStorage.setItem("gst_clientes", JSON.stringify(initial));
+        return initial;
       }
     },
 
@@ -245,30 +299,45 @@ export const API = {
         if (error) throw error;
         return data;
       } catch (err) {
-        console.error("ERRO SUPABASE BUSCAR CLIENTE:", err);
-        throw err;
+        console.warn("ERRO SUPABASE BUSCAR CLIENTE, using local storage:", err);
+        const list = await this.listar();
+        return list.find(c => c.id === id) || null;
       }
     },
 
     async inserir(cliente: Cliente): Promise<Cliente> {
+      const list = await this.listar();
+      const newId = list.reduce((max, c) => Math.max(max, c.id || 0), 0) + 1;
+      const payload = sanitizeClientePayload(cliente);
+      const newCliente = { ...payload, id: newId };
+      const updatedList = [...list, newCliente];
+      localStorage.setItem("gst_clientes", JSON.stringify(updatedList));
+
       try {
-        const payload = sanitizeClientePayload(cliente);
         const { data, error } = await supabase
           .from("clientes")
           .insert(payload)
           .select()
           .single();
         if (error) throw error;
-        return data;
+        if (data) {
+          const freshList = updatedList.map(c => c.id === newId ? data : c);
+          localStorage.setItem("gst_clientes", JSON.stringify(freshList));
+          return data;
+        }
       } catch (err) {
-        console.error("ERRO SUPABASE INSERT CLIENTE:", err);
-        throw err;
+        console.warn("ERRO SUPABASE INSERT CLIENTE (saving locally only):", err);
       }
+      return newCliente;
     },
 
     async atualizar(id: number, cliente: Cliente): Promise<Cliente> {
+      const list = await this.listar();
+      const payload = sanitizeClientePayload({ ...cliente, id });
+      const updatedList = list.map(c => c.id === id ? { ...c, ...payload } : c);
+      localStorage.setItem("gst_clientes", JSON.stringify(updatedList));
+
       try {
-        const payload = sanitizeClientePayload({ ...cliente, id });
         const { data, error } = await supabase
           .from("clientes")
           .update(payload)
@@ -276,14 +345,22 @@ export const API = {
           .select()
           .single();
         if (error) throw error;
-        return data;
+        if (data) {
+          const freshList = updatedList.map(c => c.id === id ? data : c);
+          localStorage.setItem("gst_clientes", JSON.stringify(freshList));
+          return data;
+        }
       } catch (err) {
-        console.error("ERRO SUPABASE UPDATE CLIENTE:", err);
-        throw err;
+        console.warn("ERRO SUPABASE UPDATE CLIENTE (saving locally only):", err);
       }
+      return { ...cliente, id, ...payload };
     },
 
     async excluir(id: number): Promise<boolean> {
+      const list = await this.listar();
+      const filtered = list.filter(c => c.id !== id);
+      localStorage.setItem("gst_clientes", JSON.stringify(filtered));
+
       try {
         const { error } = await supabase
           .from("clientes")
@@ -292,12 +369,13 @@ export const API = {
         if (error) throw error;
         return true;
       } catch (err) {
-        console.error("ERRO SUPABASE EXCLUIR CLIENTE:", err);
-        throw err;
+        console.warn("ERRO SUPABASE EXCLUIR CLIENTE (saving locally only):", err);
+        return true;
       }
     },
 
     async excluirTodos(): Promise<boolean> {
+      localStorage.setItem("gst_clientes", JSON.stringify([]));
       try {
         const { error } = await supabase
           .from("clientes")
@@ -306,8 +384,8 @@ export const API = {
         if (error) throw error;
         return true;
       } catch (err) {
-        console.error("ERRO SUPABASE EXCLUIR TODOS CLIENTES:", err);
-        throw err;
+        console.warn("ERRO SUPABASE EXCLUIR TODOS CLIENTES (saving locally only):", err);
+        return true;
       }
     },
 
@@ -321,9 +399,17 @@ export const API = {
         if (error) throw error;
         return data;
       } catch (err) {
-        console.error("ERRO SUPABASE BUSCAR_CODIGO CLIENTE:", err);
-        throw err;
+        console.warn("ERRO SUPABASE BUSCAR_CODIGO CLIENTE, using local storage:", err);
+        const list = await this.listar();
+        return list.find(c => String(c.codigo_sankhya) === String(codigo)) || null;
       }
+    },
+
+    async salvar(cliente: Cliente): Promise<Cliente> {
+      if (cliente.id) {
+        return await this.atualizar(cliente.id, cliente);
+      }
+      return await this.inserir(cliente);
     }
   },
 
@@ -424,13 +510,19 @@ export const API = {
           }));
         }
 
-        // Merge plano_id from local mapping if it exists in case DB is missing the column
+        // Merge plano_id & localizacao from local mapping if it exists in case DB is missing the column
         const plansMapping = localStorage.getItem("gst_implemento_planos");
         const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-        const mergedWithPlans = rawData.map((impl: any) => ({
-          ...impl,
-          plano_id: impl.plano_id || mapping[impl.id] || ""
-        }));
+        const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+        const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+        const mergedWithPlans = rawData.map((impl: any) => {
+          const rawLoc = (impl.localizacao && String(impl.localizacao).trim().toUpperCase() !== "EMPTY") ? String(impl.localizacao).trim() : "";
+          return {
+            ...impl,
+            plano_id: impl.plano_id || mapping[impl.id] || "",
+            localizacao: rawLoc || locMapping[impl.id] || ""
+          };
+        });
 
         return mergedWithPlans;
       } catch (err) {
@@ -501,9 +593,13 @@ export const API = {
 
         const plansMapping = localStorage.getItem("gst_implemento_planos");
         const mapping = plansMapping ? JSON.parse(plansMapping) : {};
+        const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+        const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+        const rawLoc = (rawData.localizacao && String(rawData.localizacao).trim().toUpperCase() !== "EMPTY") ? String(rawData.localizacao).trim() : "";
         return {
           ...rawData,
-          plano_id: rawData.plano_id || mapping[id] || ""
+          plano_id: rawData.plano_id || mapping[id] || "",
+          localizacao: rawLoc || locMapping[id] || ""
         };
       } catch (err) {
         const list = await this.listar();
@@ -528,45 +624,59 @@ export const API = {
           delete cleanPayload.plano_id;
         }
 
-        // Try inserting with the clean payload first
-        const { data, error } = await supabase
-          .from("implementos")
-          .insert(cleanPayload)
-          .select()
-          .single();
-        
-        if (error) {
-          // If database is missing the plano_id column, retry without it and save to local mapping
-          if (error.message?.includes("plano_id") || error.code === "42703") {
-            const { plano_id, ...dbPayload } = cleanPayload;
-            const retryResult = await supabase
-              .from("implementos")
-              .insert(dbPayload)
-              .select()
-              .single();
-            
-            if (retryResult.error) throw retryResult.error;
-            
-            if (plano_id) {
-              const plansMapping = localStorage.getItem("gst_implemento_planos");
-              const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-              mapping[retryResult.data.id] = plano_id;
-              localStorage.setItem("gst_implemento_planos", JSON.stringify(mapping));
+        const locVal = cleanPayload.localizacao;
+        const planoVal = cleanPayload.plano_id;
+
+        let dbPayload = { ...cleanPayload };
+        let data: any = null;
+        let attempt = 0;
+
+        while (attempt < 5) {
+          const res = await supabase
+            .from("implementos")
+            .insert(dbPayload)
+            .select()
+            .single();
+
+          if (res.error) {
+            const colName = extractMissingColumn(res.error.message || "", dbPayload);
+            if (colName && colName in dbPayload) {
+              console.warn(`Column '${colName}' not in implementos DB. Removing...`);
+              delete (dbPayload as any)[colName];
+              attempt++;
+              continue;
+            } else if (res.error.code === "42703") {
+              // Try removing plano_id or localizacao if error contains them
+              if (res.error.message?.includes("plano_id")) delete dbPayload.plano_id;
+              if (res.error.message?.includes("localizacao")) delete dbPayload.localizacao;
+              attempt++;
+              continue;
             }
-            return { ...retryResult.data, plano_id };
+            throw res.error;
           }
-          throw error;
+          data = res.data;
+          break;
         }
 
-        // Also save to local mapping for consistency
-        if (implemento.plano_id) {
+        if (!data) {
+          data = { ...cleanPayload, id: Date.now() };
+        }
+
+        if (planoVal) {
           const plansMapping = localStorage.getItem("gst_implemento_planos");
           const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-          mapping[data.id] = implemento.plano_id;
+          mapping[data.id] = planoVal;
           localStorage.setItem("gst_implemento_planos", JSON.stringify(mapping));
         }
 
-        return data;
+        if (locVal) {
+          const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+          const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+          locMapping[data.id] = locVal;
+          localStorage.setItem("gst_implemento_localizacao", JSON.stringify(locMapping));
+        }
+
+        return { ...data, plano_id: planoVal || data.plano_id, localizacao: locVal || data.localizacao };
       } catch (err) {
         console.error("ERRO SUPABASE INSERT IMPLEMENTO:", err);
         throw err;
@@ -590,50 +700,69 @@ export const API = {
           delete cleanPayload.plano_id;
         }
 
-        const { data, error } = await supabase
-          .from("implementos")
-          .update(cleanPayload)
-          .eq("id", id)
-          .select()
-          .single();
-        
-        if (error) {
-          // If database is missing the plano_id column, retry without it and save to local mapping
-          if (error.message?.includes("plano_id") || error.code === "42703") {
-            const { plano_id, ...dbPayload } = cleanPayload;
-            const retryResult = await supabase
-              .from("implementos")
-              .update(dbPayload)
-              .eq("id", id)
-              .select()
-              .single();
-            
-            if (retryResult.error) throw retryResult.error;
-            
-            const plansMapping = localStorage.getItem("gst_implemento_planos");
-            const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-            if (plano_id) {
-              mapping[id] = plano_id;
-            } else {
-              delete mapping[id];
-            }
-            localStorage.setItem("gst_implemento_planos", JSON.stringify(mapping));
-            
-            return { ...retryResult.data, plano_id };
+        const locVal = cleanPayload.localizacao;
+        const planoVal = cleanPayload.plano_id;
+
+        const validCols = [
+          "cliente_id", "categoria", "modelo", "numero_serie", "ano",
+          "horimetro_atual", "localizacao", "data_entrega", "ativo",
+          "observacao", "plano_id", "codigo_sankhya", "fabricante"
+        ];
+        let dbPayload: any = {};
+        for (const col of validCols) {
+          if (col in cleanPayload && cleanPayload[col] !== undefined) {
+            dbPayload[col] = cleanPayload[col];
           }
-          throw error;
+        }
+
+        let data: any = null;
+        let attempt = 0;
+
+        while (attempt < 5) {
+          const res = await supabase
+            .from("implementos")
+            .update(dbPayload)
+            .eq("id", id)
+            .select()
+            .single();
+
+          if (res.error) {
+            const colName = extractMissingColumn(res.error.message || "", dbPayload);
+            if (colName && colName in dbPayload) {
+              console.warn(`Column '${colName}' not in implementos DB. Removing...`);
+              delete (dbPayload as any)[colName];
+              attempt++;
+              continue;
+            }
+            throw res.error;
+          }
+          data = res.data;
+          break;
+        }
+
+        if (!data) {
+          data = { ...cleanPayload, id };
         }
 
         const plansMapping = localStorage.getItem("gst_implemento_planos");
         const mapping = plansMapping ? JSON.parse(plansMapping) : {};
-        if (implemento.plano_id) {
-          mapping[id] = implemento.plano_id;
+        if (planoVal) {
+          mapping[id] = planoVal;
         } else {
           delete mapping[id];
         }
         localStorage.setItem("gst_implemento_planos", JSON.stringify(mapping));
 
-        return data;
+        const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+        const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+        if (locVal) {
+          locMapping[id] = locVal;
+        } else {
+          delete locMapping[id];
+        }
+        localStorage.setItem("gst_implemento_localizacao", JSON.stringify(locMapping));
+
+        return { ...data, plano_id: planoVal || data.plano_id, localizacao: locVal || data.localizacao };
       } catch (err) {
         console.error("ERRO SUPABASE UPDATE IMPLEMENTO:", err);
         throw err;
@@ -761,6 +890,13 @@ export const API = {
         console.error("Error clearing implementos:", err);
         throw err;
       }
+    },
+
+    async salvar(implemento: Implemento): Promise<Implemento> {
+      if (implemento.id) {
+        return await this.atualizar(implemento.id, implemento);
+      }
+      return await this.inserir(implemento);
     }
   },
 
@@ -922,7 +1058,18 @@ export const API = {
     async listarAtivos(): Promise<Tecnico[]> {
       const list = await this.listar();
       return list.filter(t => t.ativo === true);
+    },
+
+    async salvar(tecnico: Tecnico): Promise<Tecnico> {
+      if (tecnico.id) {
+        return await this.atualizar(tecnico.id, tecnico);
+      }
+      return await this.inserir(tecnico);
     }
+  },
+
+  get ordens() {
+    return this.ordensServico;
   },
 
   ordensServico: {
@@ -966,6 +1113,9 @@ export const API = {
           implementos: o.implementos || implementosMap.get(o.implemento_id)
         }));
 
+        const osLocMapStr = localStorage.getItem("gst_os_localizacao");
+        const osLocMap = osLocMapStr ? JSON.parse(osLocMapStr) : {};
+
         const fetchedData = (finalData || []).map(o => {
           const horimetroVal = (() => {
             if (o.horimetro_final !== undefined && o.horimetro_final !== null && o.horimetro_final !== "") return Number(o.horimetro_final);
@@ -974,12 +1124,21 @@ export const API = {
             return match ? Number(match[1]) : undefined;
           })();
 
+          const locMaquinaVal = (() => {
+            if (o.localizacao_maquina) return o.localizacao_maquina;
+            if (o.localizacao) return o.localizacao;
+            if (osLocMap[o.id]) return osLocMap[o.id];
+            const match = String(o.observacao || o.obs || "").match(/\[Localização:\s*([^\]]+)\]/i);
+            return match ? match[1].trim() : undefined;
+          })();
+
           const os: any = {
             ...o,
             reclamacao: o.reclamacao || o.problema || o.problema_relatado || "",
             servico_executado: o.servico_executado || o.servico || o.laudo || "",
             observacao: o.observacao || o.obs || "",
             horimetro_final: horimetroVal,
+            localizacao_maquina: locMaquinaVal,
             km_rodado_total: o.km_rodado_total || o.km_rodado || 0,
             numero_os: (o.numero_os === "EMPTY" || !o.numero_os || o.numero_os === "NOVA") ? null : o.numero_os
           };
@@ -991,8 +1150,30 @@ export const API = {
           return os as OrdemServico;
         });
 
-        localStorage.setItem("gst_ordens_servico", JSON.stringify(fetchedData));
-        return fetchedData;
+        // Merge local storage fallback items so local OS entries like OS 0005 are not lost on refresh
+        let combinedData = [...fetchedData];
+        try {
+          const savedLocalStr = localStorage.getItem("gst_ordens_servico");
+          if (savedLocalStr) {
+            const savedLocal: OrdemServico[] = JSON.parse(savedLocalStr);
+            const fetchedIds = new Set(fetchedData.map(o => String(o.id)));
+            const fetchedNumeros = new Set(fetchedData.map(o => o.numero_os ? String(o.numero_os).trim() : "").filter(Boolean));
+
+            const localOnlyItems = savedLocal.filter(loc => {
+              if (!loc || !loc.id) return false;
+              if (fetchedIds.has(String(loc.id))) return false;
+              if (loc.numero_os && fetchedNumeros.has(String(loc.numero_os).trim())) return false;
+              return true;
+            });
+
+            combinedData = [...fetchedData, ...localOnlyItems];
+          }
+        } catch (e) {
+          console.error("Error merging local items in listar():", e);
+        }
+
+        localStorage.setItem("gst_ordens_servico", JSON.stringify(combinedData));
+        return combinedData;
       } catch (err) {
         console.warn("Database fetch failed, falling back to local storage...", err);
         const saved = localStorage.getItem("gst_ordens_servico");
@@ -1043,12 +1224,23 @@ export const API = {
           return match ? Number(match[1]) : undefined;
         })();
 
+        const osLocMapStr = localStorage.getItem("gst_os_localizacao");
+        const osLocMap = osLocMapStr ? JSON.parse(osLocMapStr) : {};
+        const locMaquinaVal = (() => {
+          if (rawData.localizacao_maquina) return rawData.localizacao_maquina;
+          if (rawData.localizacao) return rawData.localizacao;
+          if (osLocMap[rawData.id]) return osLocMap[rawData.id];
+          const match = String(rawData.observacao || rawData.obs || "").match(/\[Localização:\s*([^\]]+)\]/i);
+          return match ? match[1].trim() : undefined;
+        })();
+
         return {
           ...rawData,
           reclamacao: rawData.reclamacao || rawData.problema || rawData.problema_relatado || "",
           servico_executado: rawData.servico_executado || rawData.servico || rawData.laudo || "",
           observacao: rawData.observacao || rawData.obs || "",
           horimetro_final: horimetroVal,
+          localizacao_maquina: locMaquinaVal,
           km_rodado_total: rawData.km_rodado_total || rawData.km_rodado || 0,
         } as OrdemServico;
       } catch (err) {
@@ -1081,6 +1273,8 @@ export const API = {
         "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
         "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
         "modo_debito_interno", "classificacao_atendimento_interno", "valor_referencia_servico", "base_calculo_referencia", "centro_custo_debito", "observacao_debito",
+        "comissao_custom_opcao", "comissao_custom_valor_tecnico", "comissao_custom_valor_auxiliar",
+        "localizacao_maquina", "localizacao",
         // DB Field Mapping aliases
         "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado"
       ];
@@ -1111,11 +1305,11 @@ export const API = {
 
         // Auto update implement horimetro_atual
         if (cleanOS.implemento_id) {
-          this.implementos?.buscar(cleanOS.implemento_id).then(imp => {
+          API.implementos.buscar(cleanOS.implemento_id).then(imp => {
             if (imp) {
               const newH = Number(cleanOS.horimetro_final);
               if (newH > (Number(imp.horimetro_atual) || 0)) {
-                this.implementos?.atualizar(imp.id!, { ...imp, horimetro_atual: newH });
+                API.implementos.atualizar(imp.id!, { ...imp, horimetro_atual: newH });
               }
             }
           }).catch(() => {});
@@ -1123,21 +1317,68 @@ export const API = {
       }
       if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
       
+      const locValInserir = String(cleanOS.localizacao_maquina || (cleanOS as any).localizacao || "").trim();
+      if (locValInserir) {
+        payload.localizacao_maquina = locValInserir;
+        payload.localizacao = locValInserir;
+        const locTag = `[Localização: ${locValInserir}]`;
+        if (!String(payload.obs || "").includes("[Localização:")) {
+          payload.obs = `${payload.obs || ""} ${locTag}`.trim();
+        } else {
+          payload.obs = String(payload.obs).replace(/\[Localização:\s*[^\]]+\]/i, locTag);
+        }
+        if (!String(payload.observacao || "").includes("[Localização:")) {
+          payload.observacao = `${payload.observacao || ""} ${locTag}`.trim();
+        } else {
+          payload.observacao = String(payload.observacao).replace(/\[Localização:\s*[^\]]+\]/i, locTag);
+        }
+
+        // Auto update implement localizacao & horimetro_atual directly in Supabase
+        if (cleanOS.implemento_id) {
+          const impLocToSave = String(cleanOS.localizacao_maquina || (cleanOS as any).localizacao || "").trim();
+          const impHToSave = cleanOS.horimetro_final !== undefined && cleanOS.horimetro_final !== null && String(cleanOS.horimetro_final) !== "" ? Number(cleanOS.horimetro_final) : undefined;
+          const impUpdatePayload: any = {};
+          if (impLocToSave && impLocToSave.toUpperCase() !== "EMPTY") {
+            impUpdatePayload.localizacao = impLocToSave;
+          }
+          if (impHToSave !== undefined && !isNaN(impHToSave) && impHToSave > 0) {
+            impUpdatePayload.horimetro_atual = impHToSave;
+          }
+
+          if (Object.keys(impUpdatePayload).length > 0) {
+            (async () => {
+              try {
+                await supabase
+                  .from("implementos")
+                  .update(impUpdatePayload)
+                  .eq("id", Number(cleanOS.implemento_id));
+                if (impUpdatePayload.localizacao) {
+                  const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+                  const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+                  locMapping[cleanOS.implemento_id] = impUpdatePayload.localizacao;
+                  localStorage.setItem("gst_implemento_localizacao", JSON.stringify(locMapping));
+                }
+              } catch (err) {
+                console.warn("Failed to sync implemento location/horimetro:", err);
+              }
+            })();
+          }
+        }
+      }
+
       // Sanitize time fields: if empty string, set to null to avoid DB errors
       if (payload.hora_inicial === "") payload.hora_inicial = null;
       if (payload.hora_final === "") payload.hora_final = null;
       
-      // General sanitization: convert all empty strings to null for DB consistency
-      // except for specifically required strings if any
+      // General sanitization: convert all empty strings and NaN values to null for DB consistency
       for (const key in payload) {
-        if (payload[key] === "") {
+        if (payload[key] === "" || (typeof payload[key] === "number" && isNaN(payload[key]))) {
           payload[key] = null;
         }
       }
       
-      
-      if (payload.hora_inicial !== undefined) payload.hora_inicial = cleanTimeVal(payload.hora_inicial);
-      if (payload.hora_final !== undefined) payload.hora_final = cleanTimeVal(payload.hora_final);
+      if (payload.hora_inicial !== undefined && payload.hora_inicial !== null) payload.hora_inicial = cleanTimeVal(payload.hora_inicial);
+      if (payload.hora_final !== undefined && payload.hora_final !== null) payload.hora_final = cleanTimeVal(payload.hora_final);
       if (payload.numero_os) payload.numero_os = String(payload.numero_os).substring(0, 20);
       if (payload.status) payload.status = String(payload.status).substring(0, 30);
       if (payload.prioridade) payload.prioridade = String(payload.prioridade).substring(0, 20);
@@ -1152,65 +1393,60 @@ export const API = {
           const { data, error } = await supabase
             .from("ordens_servico")
             .insert(payload)
-            .select()
-            .single();
+            .select();
             
           if (error) {
-            // PostgreSQL code 42703 (undefined_column)
-            // PostgREST code PGRST204 (column not found in schema cache)
-            if (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("column") || error.message?.includes("does not exist")) {
-              // Handle both "column 'name'" and "'name' column" formats
-              const match = error.message.match(/column ['"](.*?)['"]/i) || error.message.match(/['"](.*?)['"] column/i);
-              const colName = match ? (match[1] || match[2]) : null;
-              if (colName && colName in payload) {
-                console.warn(`Column '${colName}' not in DB. Removing...`);
-                delete (payload as any)[colName];
-                attempt++;
-                continue;
-              }
-              
-              // Fallback for specific known missing columns if regex fails
-              const knownMissing = ["data_termino", "obs", "problema", "servico", "laudo", "horimetro", "km_rodado", "revisao_executada"];
-              let foundMissing = false;
-              for (const col of knownMissing) {
-                if (error.message.includes(`'${col}'`) || error.message.includes(`"${col}"`)) {
-                  console.warn(`Known missing column '${col}' detected. Removing.`);
-                  delete (payload as any)[col];
-                  foundMissing = true;
-                  break;
-                }
-              }
-              if (foundMissing) {
-                attempt++;
-                continue;
-              }
+            const colName = extractMissingColumn(error.message || error.details || error.hint || "", payload);
+            if (colName && colName in payload) {
+              console.warn(`Column '${colName}' not in DB. Removing...`);
+              delete (payload as any)[colName];
+              attempt++;
+              continue;
             }
             throw error;
           }
           
-          return await this.buscar(data.id) || data;
+          if (data && data[0]) {
+            if (cleanOS.localizacao_maquina) {
+              const osLocMapStr = localStorage.getItem("gst_os_localizacao");
+              const osLocMap = osLocMapStr ? JSON.parse(osLocMapStr) : {};
+              osLocMap[data[0].id] = cleanOS.localizacao_maquina.trim();
+              localStorage.setItem("gst_os_localizacao", JSON.stringify(osLocMap));
+            }
+            return await this.buscar(data[0].id) || data[0];
+          }
+          break;
         } catch (err) {
           console.error("Insert failed details:", JSON.stringify(err, null, 2));
           break;
         }
       }
       
-      // Fallback
-      const list = await this.listar();
-      const nextId = Math.max(0, ...list.map(o => o.id || 0)) + 1;
-      const result = { ...os, id: nextId };
-      localStorage.setItem("gst_ordens_servico", JSON.stringify([result, ...list]));
-      return result;
+      // Fallback local storage insert
+      try {
+        const saved = localStorage.getItem("gst_ordens_servico");
+        const list: OrdemServico[] = saved ? JSON.parse(saved) : [];
+        const nextId = Math.max(0, ...list.map(o => Number(o.id) || 0)) + 1;
+        const result = { ...os, id: os.id || nextId };
+        localStorage.setItem("gst_ordens_servico", JSON.stringify([result, ...list.filter(o => o.id !== result.id)]));
+        return result;
+      } catch (e) {
+        return { ...os, id: os.id || Date.now() };
+      }
     },
 
     async atualizar(id: number, os: OrdemServico): Promise<OrdemServico> {
       if (!os.numero_os || os.numero_os.trim() === "" || os.numero_os === "EMPTY" || os.numero_os === "NOVA" || os.numero_os.startsWith("OS-TMP-")) {
-        const list = await this.listar();
-        const lastNum = list.reduce((max, item) => {
-          const match = item.numero_os?.match(/OS(\d+)/);
-          return match ? Math.max(max, parseInt(match[1])) : max;
-        }, 0);
-        os.numero_os = "OS" + String(lastNum + 1).padStart(6, "0");
+        try {
+          const list = await this.listar();
+          const lastNum = list.reduce((max, item) => {
+            const match = item.numero_os?.match(/OS(\d+)/);
+            return match ? Math.max(max, parseInt(match[1])) : max;
+          }, 0);
+          os.numero_os = "OS" + String(lastNum + 1).padStart(6, "0");
+        } catch (e) {
+          os.numero_os = `OS${String(id).padStart(6, "0")}`;
+        }
       }
 
       const { clientes, implementos, id: _, ...cleanOS } = os;
@@ -1224,6 +1460,8 @@ export const API = {
         "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
         "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
         "modo_debito_interno", "classificacao_atendimento_interno", "valor_referencia_servico", "base_calculo_referencia", "centro_custo_debito", "observacao_debito",
+        "comissao_custom_opcao", "comissao_custom_valor_tecnico", "comissao_custom_valor_auxiliar",
+        "localizacao_maquina", "localizacao",
         "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado", "servico_executado"
       ];
       
@@ -1252,11 +1490,11 @@ export const API = {
 
         // Auto update implement horimetro_atual
         if (cleanOS.implemento_id) {
-          this.implementos?.buscar(cleanOS.implemento_id).then(imp => {
+          API.implementos.buscar(cleanOS.implemento_id).then(imp => {
             if (imp) {
               const newH = Number(cleanOS.horimetro_final);
               if (newH > (Number(imp.horimetro_atual) || 0)) {
-                this.implementos?.atualizar(imp.id!, { ...imp, horimetro_atual: newH });
+                API.implementos.atualizar(imp.id!, { ...imp, horimetro_atual: newH });
               }
             }
           }).catch(() => {});
@@ -1264,13 +1502,67 @@ export const API = {
       }
       if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
       
+      const locValAtualizar = String(cleanOS.localizacao_maquina || (cleanOS as any).localizacao || "").trim();
+      if (locValAtualizar) {
+        payload.localizacao_maquina = locValAtualizar;
+        payload.localizacao = locValAtualizar;
+        const locTag = `[Localização: ${locValAtualizar}]`;
+        if (!String(payload.obs || "").includes("[Localização:")) {
+          payload.obs = `${payload.obs || ""} ${locTag}`.trim();
+        } else {
+          payload.obs = String(payload.obs).replace(/\[Localização:\s*[^\]]+\]/i, locTag);
+        }
+        if (!String(payload.observacao || "").includes("[Localização:")) {
+          payload.observacao = `${payload.observacao || ""} ${locTag}`.trim();
+        } else {
+          payload.observacao = String(payload.observacao).replace(/\[Localização:\s*[^\]]+\]/i, locTag);
+        }
+
+        const osLocMapStr = localStorage.getItem("gst_os_localizacao");
+        const osLocMap = osLocMapStr ? JSON.parse(osLocMapStr) : {};
+        osLocMap[id] = locValAtualizar;
+        localStorage.setItem("gst_os_localizacao", JSON.stringify(osLocMap));
+
+        // Auto update implement localizacao & horimetro_atual directly in Supabase
+        if (cleanOS.implemento_id) {
+          const impLocToSave = String(cleanOS.localizacao_maquina || (cleanOS as any).localizacao || "").trim();
+          const impHToSave = cleanOS.horimetro_final !== undefined && cleanOS.horimetro_final !== null && String(cleanOS.horimetro_final) !== "" ? Number(cleanOS.horimetro_final) : undefined;
+          const impUpdatePayload: any = {};
+          if (impLocToSave && impLocToSave.toUpperCase() !== "EMPTY") {
+            impUpdatePayload.localizacao = impLocToSave;
+          }
+          if (impHToSave !== undefined && !isNaN(impHToSave) && impHToSave > 0) {
+            impUpdatePayload.horimetro_atual = impHToSave;
+          }
+
+          if (Object.keys(impUpdatePayload).length > 0) {
+            (async () => {
+              try {
+                await supabase
+                  .from("implementos")
+                  .update(impUpdatePayload)
+                  .eq("id", Number(cleanOS.implemento_id));
+                if (impUpdatePayload.localizacao) {
+                  const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+                  const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+                  locMapping[cleanOS.implemento_id] = impUpdatePayload.localizacao;
+                  localStorage.setItem("gst_implemento_localizacao", JSON.stringify(locMapping));
+                }
+              } catch (err) {
+                console.warn("Failed to sync implemento location/horimetro:", err);
+              }
+            })();
+          }
+        }
+      }
+
       // Sanitize time fields: if empty string, set to null to avoid DB errors
       if (payload.hora_inicial === "") payload.hora_inicial = null;
       if (payload.hora_final === "") payload.hora_final = null;
 
-      // General sanitization: convert all empty strings to null for DB consistency
+      // General sanitization: convert all empty strings and NaN values to null for DB consistency
       for (const key in payload) {
-        if (payload[key] === "") {
+        if (payload[key] === "" || (typeof payload[key] === "number" && isNaN(payload[key]))) {
           payload[key] = null;
         }
       }
@@ -1278,56 +1570,81 @@ export const API = {
       let attempt = 0;
       while (attempt < 15) {
         try {
-          const { data, error } = await supabase
+          let { data, error } = await supabase
             .from("ordens_servico")
             .update(payload)
             .eq("id", id)
-            .select()
-            .single();
+            .select();
             
+          if (!error && (!data || data.length === 0) && os.numero_os) {
+            const { data: numData, error: numErr } = await supabase
+              .from("ordens_servico")
+              .update(payload)
+              .eq("numero_os", String(os.numero_os).trim())
+              .select();
+            if (!numErr && numData && numData.length > 0) {
+              data = numData;
+            }
+          }
+
           if (error) {
-            // PostgreSQL code 42703 (undefined_column)
-            // PostgREST code PGRST204 (column not found in schema cache)
-            if (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("column") || error.message?.includes("does not exist")) {
-              // Handle both "column 'name'" and "'name' column" formats
-              const match = error.message.match(/column ['"](.*?)['"]/i) || error.message.match(/['"](.*?)['"] column/i);
-              const colName = match ? (match[1] || match[2]) : null;
-              if (colName && colName in payload) {
-                console.warn(`Column '${colName}' not in DB. Removing...`);
+            const colName = extractMissingColumn(error.message || error.details || error.hint || "", payload);
+            if (colName && colName in payload) {
+              console.warn(`Column '${colName}' not in DB. Removing...`);
+              delete (payload as any)[colName];
+              attempt++;
+              continue;
+            }
+            throw error;
+          }
+
+          if (!data || data.length === 0) {
+            // Row was not found in Supabase. Attempt insert with ID
+            const insertPayload = { ...payload, id };
+            const { data: insData, error: insErr } = await supabase
+              .from("ordens_servico")
+              .insert(insertPayload)
+              .select();
+
+            if (insErr) {
+              const colName = extractMissingColumn(insErr.message || insErr.details || insErr.hint || "", insertPayload);
+              if (colName && colName in insertPayload) {
+                console.warn(`Column '${colName}' not in DB during insert fallback. Removing...`);
                 delete (payload as any)[colName];
-                attempt++;
-                continue;
-              }
-              
-              // Fallback for specific known missing columns if regex fails
-              const knownMissing = ["data_termino", "obs", "problema", "servico", "laudo", "horimetro", "km_rodado", "revisao_executada"];
-              let foundMissing = false;
-              for (const col of knownMissing) {
-                if (error.message.includes(`'${col}'`) || error.message.includes(`"${col}"`)) {
-                  console.warn(`Known missing column '${col}' detected. Removing.`);
-                  delete (payload as any)[col];
-                  foundMissing = true;
-                  break;
-                }
-              }
-              if (foundMissing) {
+                delete (insertPayload as any)[colName];
                 attempt++;
                 continue;
               }
             }
-            throw error;
+
+            if (insData && insData[0]) {
+              return await this.buscar(insData[0].id) || insData[0];
+            }
+          } else {
+            return await this.buscar(data[0].id) || data[0];
           }
-          return await this.buscar(data.id) || data;
+          break;
         } catch (err) {
           console.error("Update failed details:", JSON.stringify(err, null, 2));
           break;
         }
       }
       
-      // Sync local storage fallback
-      const list = await this.listar();
-      const updated = list.map(o => o.id === id ? { ...o, ...os } : o);
-      localStorage.setItem("gst_ordens_servico", JSON.stringify(updated));
+      // Sync local storage fallback safely
+      try {
+        const saved = localStorage.getItem("gst_ordens_servico");
+        const list: OrdemServico[] = saved ? JSON.parse(saved) : [];
+        const index = list.findIndex(o => Number(o.id) === Number(id));
+        let updated: OrdemServico[];
+        if (index >= 0) {
+          updated = list.map(o => Number(o.id) === Number(id) ? { ...o, ...os, id } : o);
+        } else {
+          updated = [{ ...os, id }, ...list];
+        }
+        localStorage.setItem("gst_ordens_servico", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Local storage fallback sync error:", e);
+      }
       return { ...os, id };
     },
 
@@ -2231,6 +2548,7 @@ export const API = {
       if (saved) {
         try {
           localList = JSON.parse(saved);
+          localList = localList.filter((u: any) => u.id !== "usr_2" && u.id !== "usr_3" && u.usuario !== "amanda.faturamento" && u.usuario !== "marcos.mecanico");
           let migrated = false;
           localList = localList.map((u: any) => {
             if (u.usuario === "admin" && (u.senha === "admin" || !u.senha)) {
@@ -2243,9 +2561,7 @@ export const API = {
             }
             return u;
           });
-          if (migrated) {
-            localStorage.setItem("gst_usuarios_v1", JSON.stringify(localList));
-          }
+          localStorage.setItem("gst_usuarios_v1", JSON.stringify(localList));
         } catch (e) {
           console.error("Error parsing local users:", e);
         }
@@ -2260,11 +2576,12 @@ export const API = {
           const supabaseParsed = data.map(mapDbUserToUsuario).map(u => ({
             ...u,
             ultimo_acesso: !u.ultimo_acesso || u.ultimo_acesso === "Nunca" ? "Hoje, 10:30" : u.ultimo_acesso
-          }));
+          })).filter(u => u.id !== "usr_2" && u.id !== "usr_3" && u.usuario !== "amanda.faturamento" && u.usuario !== "marcos.mecanico");
           
           const supabaseMap = new Map(supabaseParsed.map(u => [u.id, u]));
           const merged = [...supabaseParsed];
           for (const loc of localList) {
+            if (loc.id === "usr_2" || loc.id === "usr_3") continue;
             const locWithAccess = {
               ...loc,
               ultimo_acesso: !loc.ultimo_acesso || loc.ultimo_acesso === "Nunca" ? "Hoje, 10:30" : loc.ultimo_acesso
@@ -2278,18 +2595,21 @@ export const API = {
               }
             }
           }
-          localStorage.setItem("gst_usuarios_v1", JSON.stringify(merged));
-          return merged;
+          const finalMerged = merged.filter(u => u.id !== "usr_2" && u.id !== "usr_3" && u.usuario !== "amanda.faturamento" && u.usuario !== "marcos.mecanico");
+          localStorage.setItem("gst_usuarios_v1", JSON.stringify(finalMerged));
+          return finalMerged;
         }
       } catch (e) {
         console.warn("Supabase fetch error, using local data:", e);
       }
 
       if (localList.length > 0) {
-        return localList.map(u => ({
+        const cleanedLocal = localList.filter(u => u.id !== "usr_2" && u.id !== "usr_3" && u.usuario !== "amanda.faturamento" && u.usuario !== "marcos.mecanico").map(u => ({
           ...u,
           ultimo_acesso: !u.ultimo_acesso || u.ultimo_acesso === "Nunca" ? "Hoje, 10:30" : u.ultimo_acesso
         }));
+        localStorage.setItem("gst_usuarios_v1", JSON.stringify(cleanedLocal));
+        return cleanedLocal;
       }
 
       const defaultWithAccess = INITIAL_USUARIOS.map(u => ({
@@ -2438,6 +2758,849 @@ export const API = {
         console.warn("Could not sync delete to Supabase, deleted locally:", err);
       }
       return true;
+    }
+  },
+
+  chamadosGarantia: {
+    async listar(): Promise<any[]> {
+      try {
+        const { data, error } = await supabase
+          .from("chamados_garantia")
+          .select("*")
+          .order("id", { ascending: false });
+        if (!error && data) {
+          const mapped = data.map((d: any) => ({
+            id: d.numero_chamado || String(d.id),
+            db_id: d.id,
+            tipo_objeto: d.tipo_objeto || "EQUIPAMENTO",
+            implemento_id: d.implemento_id,
+            cliente_id: d.cliente_id,
+            codigo_peca: d.codigo_peca,
+            descricao_peca: d.descricao_peca,
+            fabricante_peca: d.fabricante_peca,
+            nota_fiscal_peca: d.nota_fiscal_peca,
+            solicitante: d.solicitante,
+            tipo_problema: d.tipo_problema,
+            descricao: d.descricao,
+            parecer_tecnico: d.parecer_tecnico,
+            horimetro: Number(d.horimetro || 0),
+            status: d.status || "ABERTO",
+            data_abertura: d.data_abertura || new Date().toISOString().split("T")[0],
+            ordem_servico_id: d.ordem_servico_id
+          }));
+          localStorage.setItem("gst_chamados_garantia", JSON.stringify(mapped));
+          return mapped;
+        }
+      } catch (err) {
+        console.warn("Could not fetch chamados_garantia from Supabase, loading from localStorage:", err);
+      }
+      const saved = localStorage.getItem("gst_chamados_garantia");
+      return saved ? JSON.parse(saved) : [];
+    },
+
+    async inserir(chamado: any): Promise<any> {
+      const saved = localStorage.getItem("gst_chamados_garantia");
+      const list = saved ? JSON.parse(saved) : [];
+      const numChamado = chamado.id || `CG-${Math.floor(1000 + Math.random() * 9000)}`;
+      const newChamado = { ...chamado, id: numChamado };
+      const updatedList = [newChamado, ...list];
+      localStorage.setItem("gst_chamados_garantia", JSON.stringify(updatedList));
+
+      try {
+        const payload = {
+          numero_chamado: numChamado,
+          tipo_objeto: chamado.tipo_objeto || "EQUIPAMENTO",
+          implemento_id: chamado.implemento_id || null,
+          cliente_id: chamado.cliente_id,
+          codigo_peca: chamado.codigo_peca || null,
+          descricao_peca: chamado.descricao_peca || null,
+          fabricante_peca: chamado.fabricante_peca || null,
+          nota_fiscal_peca: chamado.nota_fiscal_peca || null,
+          solicitante: chamado.solicitante || "Solicitante",
+          tipo_problema: chamado.tipo_problema || "MECANICO",
+          descricao: chamado.descricao,
+          parecer_tecnico: chamado.parecer_tecnico || null,
+          horimetro: chamado.horimetro || 0,
+          status: chamado.status || "ABERTO",
+          data_abertura: chamado.data_abertura || new Date().toISOString().split("T")[0],
+          ordem_servico_id: chamado.ordem_servico_id || null
+        };
+        await supabase.from("chamados_garantia").insert(payload);
+      } catch (err) {
+        console.warn("Could not sync insert of chamado to Supabase:", err);
+      }
+      return newChamado;
+    },
+
+    async atualizar(id: string, chamado: any): Promise<any> {
+      const saved = localStorage.getItem("gst_chamados_garantia");
+      const list = saved ? JSON.parse(saved) : [];
+      const updatedList = list.map((c: any) => (c.id === id || c.numero_chamado === id || (c.db_id && String(c.db_id) === String(id))) ? { ...c, ...chamado } : c);
+      localStorage.setItem("gst_chamados_garantia", JSON.stringify(updatedList));
+
+      try {
+        const payload: any = {
+          tipo_objeto: chamado.tipo_objeto,
+          implemento_id: chamado.implemento_id || null,
+          cliente_id: chamado.cliente_id,
+          codigo_peca: chamado.codigo_peca || null,
+          descricao_peca: chamado.descricao_peca || null,
+          fabricante_peca: chamado.fabricante_peca || null,
+          nota_fiscal_peca: chamado.nota_fiscal_peca || null,
+          solicitante: chamado.solicitante,
+          tipo_problema: chamado.tipo_problema,
+          descricao: chamado.descricao,
+          parecer_tecnico: chamado.parecer_tecnico,
+          horimetro: chamado.horimetro,
+          status: chamado.status,
+          ordem_servico_id: chamado.ordem_servico_id || null
+        };
+        if (chamado.db_id) {
+          await supabase.from("chamados_garantia").update(payload).eq("id", chamado.db_id);
+        } else {
+          const { error } = await supabase.from("chamados_garantia").update(payload).eq("numero_chamado", id);
+          if (error) {
+            await supabase.from("chamados_garantia").update(payload).eq("id", id);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not sync update of chamado to Supabase:", err);
+      }
+      return { ...chamado, id };
+    },
+
+    async excluir(id: string): Promise<boolean> {
+      const saved = localStorage.getItem("gst_chamados_garantia");
+      const list = saved ? JSON.parse(saved) : [];
+      const filtered = list.filter((c: any) => c.id !== id);
+      localStorage.setItem("gst_chamados_garantia", JSON.stringify(filtered));
+
+      try {
+        await supabase.from("chamados_garantia").delete().eq("numero_chamado", id);
+      } catch (err) {
+        console.warn("Could not sync delete of chamado to Supabase:", err);
+      }
+      return true;
+    }
+  },
+
+  empresa: {
+    async obter(): Promise<any> {
+      try {
+        const { data, error } = await supabase
+          .from("empresa")
+          .select("*")
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) {
+          const config = {
+            id: data.id,
+            nome: data.razao_social || data.nome || "",
+            subtitulo: data.slogan || data.subtitulo || "",
+            endereco: data.endereco || "",
+            telefone: data.telefone || "",
+            cnpj: data.cnpj || "",
+            email: data.email || "",
+            inscricao_estadual: data.inscricao_estadual || data.ie || "",
+            logo: data.logo_url || data.logo || ""
+          };
+          localStorage.setItem("gst_company_config_v1", JSON.stringify(config));
+          return config;
+        }
+
+        const { data: data2, error: err2 } = await supabase
+          .from("empresa_config")
+          .select("*")
+          .limit(1)
+          .maybeSingle();
+
+        if (!err2 && data2) {
+          const config = {
+            id: data2.id,
+            nome: data2.nome || data2.razao_social || "",
+            subtitulo: data2.subtitulo || data2.slogan || "",
+            endereco: data2.endereco || "",
+            telefone: data2.telefone || "",
+            cnpj: data2.cnpj || "",
+            email: data2.email || "",
+            inscricao_estadual: data2.inscricao_estadual || data2.ie || "",
+            logo: data2.logo || data2.logo_url || ""
+          };
+          localStorage.setItem("gst_company_config_v1", JSON.stringify(config));
+          return config;
+        }
+      } catch (err) {
+        console.warn("Could not load company config from Supabase:", err);
+      }
+
+      const saved = localStorage.getItem("gst_company_config_v1");
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error("Error parsing local company config:", e);
+        }
+      }
+      return null;
+    },
+
+    async salvar(config: any): Promise<any> {
+      localStorage.setItem("gst_company_config_v1", JSON.stringify(config));
+      window.dispatchEvent(new Event("company_config_updated"));
+
+      const payloadEmpresa: any = {
+        razao_social: config.nome || "",
+        slogan: config.subtitulo || "",
+        cnpj: config.cnpj || "",
+        inscricao_estadual: config.inscricao_estadual || "",
+        endereco: config.endereco || "",
+        telefone: config.telefone || "",
+        email: config.email || "",
+        logo_url: config.logo || "",
+        updated_at: new Date().toISOString()
+      };
+
+      try {
+        const { data: existing } = await supabase.from("empresa").select("id").limit(1).maybeSingle();
+
+        if (existing?.id) {
+          const { error: updateErr } = await supabase
+            .from("empresa")
+            .update(payloadEmpresa)
+            .eq("id", existing.id);
+
+          if (!updateErr) {
+            config.id = existing.id;
+            localStorage.setItem("gst_company_config_v1", JSON.stringify(config));
+            return config;
+          } else {
+            console.warn("Error updating existing empresa row:", updateErr);
+          }
+        } else {
+          const { data: inserted, error: insertErr } = await supabase
+            .from("empresa")
+            .insert([payloadEmpresa])
+            .select()
+            .single();
+
+          if (!insertErr && inserted?.id) {
+            config.id = inserted.id;
+            localStorage.setItem("gst_company_config_v1", JSON.stringify(config));
+            return config;
+          } else {
+            console.warn("Error inserting into empresa table:", insertErr);
+          }
+        }
+
+        await supabase.from("empresa_config").upsert({
+          id: config.id || 1,
+          nome: config.nome,
+          subtitulo: config.subtitulo,
+          endereco: config.endereco,
+          telefone: config.telefone,
+          cnpj: config.cnpj,
+          email: config.email,
+          inscricao_estadual: config.inscricao_estadual,
+          logo: config.logo
+        }, { onConflict: "id" });
+
+      } catch (err) {
+        console.warn("Could not sync company config to Supabase:", err);
+      }
+      return config;
+    }
+  },
+
+  centrosCusto: {
+    async listar(): Promise<string[]> {
+      try {
+        const { data, error } = await supabase
+          .from("centros_custo")
+          .select("nome")
+          .eq("ativo", true)
+          .order("nome", { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          return data.map((c: any) => c.nome);
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar centros de custo no Supabase:", err);
+      }
+      const saved = localStorage.getItem("gst_centros_custo");
+      return saved ? JSON.parse(saved) : [];
+    },
+
+    async salvar(nome: string): Promise<boolean> {
+      try {
+        await supabase
+          .from("centros_custo")
+          .upsert({ nome: nome.trim(), ativo: true }, { onConflict: "nome" });
+      } catch (err) {
+        console.warn("Erro ao salvar centro de custo no Supabase:", err);
+      }
+      return true;
+    },
+
+    async sincronizar(centros: string[]): Promise<boolean> {
+      try {
+        const payload = centros.map(nome => ({ nome: nome.trim(), ativo: true }));
+        await supabase.from("centros_custo").upsert(payload, { onConflict: "nome" });
+        return true;
+      } catch (err) {
+        console.warn("Erro ao sincronizar centros de custo no Supabase:", err);
+        return false;
+      }
+    },
+
+    async excluir(nome: string): Promise<boolean> {
+      try {
+        await supabase.from("centros_custo").delete().eq("nome", nome);
+      } catch (err) {
+        console.warn("Erro ao excluir centro de custo no Supabase:", err);
+      }
+      return true;
+    }
+  },
+
+  comissaoConfig: {
+    async obter(): Promise<any> {
+      try {
+        const { data, error } = await supabase
+          .from("comissao_config")
+          .select("*")
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) {
+          return data;
+        }
+      } catch (err) {
+        console.warn("Erro ao obter comissao_config no Supabase:", err);
+      }
+      const saved = localStorage.getItem("gst_comissoes_config");
+      return saved ? JSON.parse(saved) : null;
+    },
+
+    async salvar(configObj: any): Promise<any> {
+      try {
+        const { data: existing } = await supabase.from("comissao_config").select("id").limit(1).maybeSingle();
+        
+        const percentual = configObj.regraPadrao?.percentualTecnico ?? configObj.regraPadrao?.percentualPadrao ?? configObj.percentual_padrao ?? 20;
+        const base = configObj.regraPadrao?.baseCalculo ?? configObj.regraPadrao?.baseCalculoPadrao ?? configObj.base_calculo ?? "faturamento_total";
+        const modo = configObj.modo_calculo || configObj.modoCalculo || "REGRA_MAIS_ESPECIFICA";
+        const status = configObj.status_os || configObj.statusOS || "CONCLUIDA";
+
+        const payload = {
+          modo_calculo: String(modo),
+          percentual_padrao: Number(percentual),
+          base_calculo: String(base),
+          status_os: String(status),
+          ativo: true,
+          updated_at: new Date().toISOString()
+        };
+
+        if (existing?.id) {
+          const { data, error } = await supabase.from("comissao_config").update(payload).eq("id", existing.id).select().single();
+          if (!error && data) return data;
+        } else {
+          const { data, error } = await supabase.from("comissao_config").insert([payload]).select().single();
+          if (!error && data) return data;
+        }
+      } catch (err) {
+        console.warn("Erro ao salvar comissao_config no Supabase:", err);
+      }
+      return configObj;
+    }
+  },
+
+  comissaoRegras: {
+    async listar(): Promise<any[]> {
+      try {
+        const { data, error } = await supabase
+          .from("comissao_regras")
+          .select("*")
+          .eq("ativo", true);
+
+        if (!error && data && data.length > 0) {
+          return data.map((item: any) => {
+            let obs: any = {};
+            if (item.observacao) {
+              try { obs = JSON.parse(item.observacao); } catch (e) {}
+            }
+            return {
+              tipo: item.tipo_atendimento,
+              baseCalculo: item.base_calculo,
+              valorTecnico: item.base_calculo === "fixo" ? Number(item.valor_fixo || 0) : Number(item.percentual || 0),
+              valorHoraComissao: obs.valorHoraComissao,
+              valorKmComissao: obs.valorKmComissao,
+              regraAuxiliar: obs.regraAuxiliar || "racha_50_50",
+              valorAuxiliar: obs.valorAuxiliar || 0
+            };
+          });
+        }
+      } catch (err) {
+        console.warn("Erro ao listar comissao_regras no Supabase:", err);
+      }
+      return [];
+    },
+
+    async sincronizar(regras: any[]): Promise<boolean> {
+      if (!regras || regras.length === 0) return true;
+      try {
+        for (const r of regras) {
+          const payload = {
+            tipo_atendimento: r.tipo,
+            base_calculo: r.baseCalculo || "VALOR_TOTAL",
+            relacao_aplicada: r.baseCalculo === "fixo" ? "VALOR_FIXO" : "PERCENTUAL",
+            percentual: Number(r.valorTecnico || 0),
+            valor_fixo: r.baseCalculo === "fixo" ? Number(r.valorTecnico || 0) : 0,
+            observacao: JSON.stringify({
+              valorHoraComissao: r.valorHoraComissao,
+              valorKmComissao: r.valorKmComissao,
+              regraAuxiliar: r.regraAuxiliar,
+              valorAuxiliar: r.valorAuxiliar
+            }),
+            ativo: true,
+            updated_at: new Date().toISOString()
+          };
+
+          const { data: existing } = await supabase
+            .from("comissao_regras")
+            .select("id")
+            .eq("tipo_atendimento", r.tipo)
+            .maybeSingle();
+
+          if (existing?.id) {
+            await supabase.from("comissao_regras").update(payload).eq("id", existing.id);
+          } else {
+            await supabase.from("comissao_regras").insert([payload]);
+          }
+        }
+        return true;
+      } catch (err) {
+        console.warn("Erro ao sincronizar comissao_regras no Supabase:", err);
+        return false;
+      }
+    }
+  },
+
+  comissaoMetas: {
+    async listar(): Promise<any[]> {
+      try {
+        // Tenta buscar com o relacionamento JOIN com a tabela de técnicos
+        const { data, error } = await supabase
+          .from("comissao_metas")
+          .select("*, tecnicos(id, nome, apelido)")
+          .order("ano", { ascending: false })
+          .order("mes", { ascending: false });
+
+        if (!error && data) {
+          return data;
+        }
+
+        // Se houver erro de relacionamento (ex: FK não configurada), tenta busca simples
+        const { data: simpleData, error: simpleError } = await supabase
+          .from("comissao_metas")
+          .select("*")
+          .order("ano", { ascending: false })
+          .order("mes", { ascending: false });
+
+        if (!simpleError && simpleData) {
+          return simpleData;
+        }
+
+        if (error || simpleError) {
+          console.warn("Aviso ao buscar comissao_metas no Supabase (tabela pode não ter sido criada ainda):", error || simpleError);
+        }
+      } catch (err) {
+        console.warn("Exceção ao conectar com Supabase em comissao_metas:", err);
+      }
+      return [];
+    },
+
+    async salvar(meta: any): Promise<any> {
+      try {
+        const tecnicoIdVal = !isNaN(Number(meta.tecnico_id)) ? Number(meta.tecnico_id) : meta.tecnico_id;
+        const payload: any = {
+          tecnico_id: tecnicoIdVal,
+          ano: Number(meta.ano),
+          mes: Number(meta.mes),
+          meta_faturamento: Number(meta.meta_faturamento || 0),
+          meta_comissao: Number(meta.meta_comissao || 0),
+          observacao: meta.observacao || "",
+          ativo: meta.ativo !== false
+        };
+
+        if (meta.id && typeof meta.id === "number" && meta.id < 1000000000) {
+          payload.id = meta.id;
+        }
+
+        const { data, error } = await supabase
+          .from("comissao_metas")
+          .upsert(payload, { onConflict: "tecnico_id,ano,mes" })
+          .select()
+          .single();
+
+        if (error) {
+          console.warn("Aviso ao salvar comissao_metas no Supabase:", error);
+          throw error;
+        }
+
+        return data;
+      } catch (err) {
+        console.warn("Erro no salvar comissao_metas:", err);
+        throw err;
+      }
+    },
+
+    async excluir(id: number | string): Promise<boolean> {
+      try {
+        const { error } = await supabase.from("comissao_metas").delete().eq("id", id);
+        if (error) {
+          console.warn("Aviso ao excluir comissao_metas no Supabase:", error);
+          throw error;
+        }
+        return true;
+      } catch (err) {
+        console.warn("Erro ao excluir comissao_metas:", err);
+        throw err;
+      }
+    }
+  },
+
+  comissaoFaixas: {
+    async listar(): Promise<any[]> {
+      try {
+        const { data, error } = await supabase
+          .from("comissao_faixas")
+          .select("*")
+          .order("valor_inicial", { ascending: true });
+
+        if (!error && data) {
+          return data;
+        }
+      } catch (err) {
+        console.warn("Erro ao listar comissao_faixas:", err);
+      }
+      const saved = localStorage.getItem("gst_comissao_faixas");
+      return saved ? JSON.parse(saved) : [];
+    },
+
+    async salvar(faixa: any): Promise<any> {
+      const saved = localStorage.getItem("gst_comissao_faixas");
+      let list: any[] = saved ? JSON.parse(saved) : [];
+      let itemToSave = { ...faixa, id: faixa.id || Date.now() };
+
+      const existingIndex = list.findIndex((f: any) => String(f.id) === String(itemToSave.id));
+      if (existingIndex >= 0) {
+        list[existingIndex] = itemToSave;
+      } else {
+        list.push(itemToSave);
+      }
+      localStorage.setItem("gst_comissao_faixas", JSON.stringify(list));
+
+      try {
+        const payload: any = {
+          nome: faixa.nome,
+          valor_inicial: Number(faixa.valor_inicial || 0),
+          valor_final: faixa.valor_final !== undefined && faixa.valor_final !== null && faixa.valor_final !== "" ? Number(faixa.valor_final) : null,
+          percentual: Number(faixa.percentual || 0),
+          bonus_fixo: Number(faixa.bonus_fixo || 0),
+          ativo: faixa.ativo !== false
+        };
+
+        if (faixa.id && typeof faixa.id === "number" && faixa.id < 1000000000) {
+          payload.id = faixa.id;
+        }
+
+        const { data, error } = await supabase
+          .from("comissao_faixas")
+          .upsert(payload)
+          .select()
+          .single();
+
+        if (!error && data) {
+          return data;
+        }
+      } catch (err) {
+        console.warn("Erro ao salvar comissao_faixas no Supabase, mantendo local:", err);
+      }
+
+      return itemToSave;
+    },
+
+    async excluir(id: number | string): Promise<boolean> {
+      const saved = localStorage.getItem("gst_comissao_faixas");
+      let list: any[] = saved ? JSON.parse(saved) : [];
+      const filtered = list.filter((f: any) => String(f.id) !== String(id));
+      localStorage.setItem("gst_comissao_faixas", JSON.stringify(filtered));
+
+      try {
+        await supabase.from("comissao_faixas").delete().eq("id", id);
+      } catch (err) {
+        console.warn("Erro ao deletar comissao_faixas no Supabase:", err);
+      }
+      return true;
+    }
+  },
+
+  comissoes: {
+    async listar(): Promise<any[]> {
+      try {
+        const { data, error } = await supabase
+          .from("comissoes")
+          .select("*")
+          .order("data_comissao", { ascending: false });
+
+        if (!error && data) {
+          return data;
+        }
+        if (error) {
+          console.warn("Aviso ao buscar comissoes no Supabase:", error);
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar comissoes no Supabase:", err);
+      }
+      return [];
+    },
+
+    async sincronizar(comissoesList: any[]): Promise<boolean> {
+      if (!comissoesList || comissoesList.length === 0) return true;
+      try {
+        for (const item of comissoesList) {
+          let dataComissao = item.data || new Date().toISOString().split("T")[0];
+          if (dataComissao.includes("T")) {
+            dataComissao = dataComissao.split("T")[0];
+          }
+
+          const payload: any = {
+            os_id: item.os_id ? String(item.os_id) : null,
+            os_numero: item.numero_os && item.numero_os !== "—" ? String(item.numero_os) : null,
+            tecnico_id: String(item.tecnico_id || "0"),
+            tecnico_nome: item.tecnico_nome || "Técnico Não Definido",
+            cliente_nome: item.cliente_nome || null,
+            data_comissao: dataComissao,
+            tipo_atendimento: item.tipo_os || null,
+            valor_os: Number(item.valor_os || 0),
+            valor_comissao: Number(item.valor || item.valor_comissao || 0),
+            tipo_lancamento: item.isManual ? "MANUAL" : "AUTO",
+            status: item.status || "PENDENTE",
+            observacao: item.descricao || ""
+          };
+
+          if (payload.os_id && payload.tecnico_id) {
+            const { data: existing } = await supabase
+              .from("comissoes")
+              .select("id")
+              .eq("os_id", payload.os_id)
+              .eq("tecnico_id", payload.tecnico_id)
+              .maybeSingle();
+
+            if (existing?.id) {
+              await supabase.from("comissoes").update({
+                valor_comissao: payload.valor_comissao,
+                valor_os: payload.valor_os,
+                status: payload.status,
+                tecnico_nome: payload.tecnico_nome,
+                cliente_nome: payload.cliente_nome,
+                observacao: payload.observacao,
+                updated_at: new Date().toISOString()
+              }).eq("id", existing.id);
+            } else {
+              await supabase.from("comissoes").insert([payload]);
+            }
+          } else if (payload.tipo_lancamento === "MANUAL") {
+            if (item.db_id) {
+              await supabase.from("comissoes").update(payload).eq("id", item.db_id);
+            } else {
+              await supabase.from("comissoes").insert([payload]);
+            }
+          }
+        }
+        return true;
+      } catch (err) {
+        console.warn("Erro ao sincronizar comissoes no Supabase:", err);
+        return false;
+      }
+    },
+
+    async salvar(comissao: any): Promise<any> {
+      try {
+        let dataComissao = comissao.data || new Date().toISOString().split("T")[0];
+        if (dataComissao.includes("T")) {
+          dataComissao = dataComissao.split("T")[0];
+        }
+
+        const payload: any = {
+          os_id: comissao.os_id ? String(comissao.os_id) : null,
+          os_numero: comissao.numero_os && comissao.numero_os !== "—" ? String(comissao.numero_os) : null,
+          tecnico_id: String(comissao.tecnico_id || "0"),
+          tecnico_nome: comissao.tecnico_nome || "",
+          cliente_nome: comissao.cliente_nome || null,
+          data_comissao: dataComissao,
+          tipo_atendimento: comissao.tipo_os || null,
+          valor_os: Number(comissao.valor_os || 0),
+          valor_comissao: Number(comissao.valor || comissao.valor_comissao || 0),
+          tipo_lancamento: comissao.isManual ? "MANUAL" : "AUTO",
+          status: comissao.status || "PENDENTE",
+          observacao: comissao.descricao || ""
+        };
+
+        if (comissao.db_id) {
+          payload.id = comissao.db_id;
+        }
+
+        const { data, error } = await supabase
+          .from("comissoes")
+          .upsert(payload)
+          .select()
+          .single();
+
+        if (!error && data) {
+          return data;
+        }
+      } catch (err) {
+        console.warn("Erro ao salvar comissao individual no Supabase:", err);
+      }
+      return comissao;
+    },
+
+    async atualizarStatus(keyOrId: string | number, status: "PENDENTE" | "PAGO", tecnicoId?: number): Promise<boolean> {
+      try {
+        const payload = {
+          status,
+          updated_at: new Date().toISOString(),
+          data_pagamento: status === "PAGO" ? new Date().toISOString().split("T")[0] : null
+        };
+
+        if (typeof keyOrId === "number") {
+          await supabase.from("comissoes").update(payload).eq("id", keyOrId);
+        } else if (String(keyOrId).startsWith("OS-")) {
+          const parts = String(keyOrId).split("-");
+          const realOsId = parts[1];
+          
+          if (tecnicoId) {
+            await supabase.from("comissoes").update(payload).eq("os_id", realOsId).eq("tecnico_id", Number(tecnicoId));
+          } else {
+            const role = parts[2];
+            if (role === "tech") {
+              await supabase.from("comissoes").update(payload).eq("os_id", realOsId).like("observacao", "%(Técnico)%");
+            } else if (role === "aux") {
+              await supabase.from("comissoes").update(payload).eq("os_id", realOsId).like("observacao", "%(Auxiliar)%");
+            } else {
+              await supabase.from("comissoes").update(payload).eq("os_id", realOsId);
+            }
+          }
+        } else {
+          await supabase.from("comissoes").update(payload).eq("id", keyOrId);
+        }
+        return true;
+      } catch (err) {
+        console.warn("Erro ao atualizar status de comissao no Supabase:", err);
+        return false;
+      }
+    }
+  },
+
+  configuracoesAgenda: {
+    async obter(): Promise<any | null> {
+      try {
+        const { data, error } = await supabase
+          .from("configuracoes_agenda")
+          .select("*")
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          console.warn("Aviso ao buscar configuracoes_agenda no Supabase:", error);
+          return null;
+        }
+
+        if (!data) return null;
+
+        const formatTimeForInput = (tStr: string | null) => {
+          if (!tStr) return "07:30";
+          const s = String(tStr).trim();
+          const parts = s.split(":");
+          if (parts.length >= 2) {
+            return `${parts[0].padStart(2, "0")}:${parts[1].padStart(2, "0")}`;
+          }
+          return s;
+        };
+
+        const storedLocal = localStorage.getItem("gst_agenda_config_v1");
+        let localDuracao = {};
+        if (storedLocal) {
+          try {
+            localDuracao = JSON.parse(storedLocal).duracaoAtendimentoPorTipo || {};
+          } catch (e) {}
+        }
+
+        return {
+          horaInicioWork: formatTimeForInput(data.hora_inicio_work) || "07:30",
+          horaFimWork: formatTimeForInput(data.hora_fim_work) || "18:00",
+          intervaloAlmocoInicio: formatTimeForInput(data.intervalo_almoco_inicio) || "12:00",
+          intervaloAlmocoFim: formatTimeForInput(data.intervalo_almoco_fim) || "13:30",
+          exibirFimDeSemana: data.exibir_fim_de_semana ?? true,
+          limiteOsPorTecnicoDia: Number(data.limite_os_por_tecnico_dia) || 4,
+          bloquearSobreposicao: data.bloquear_sobreposicao ?? true,
+          notificarTecnicoWhatsapp: data.notificar_tecnico_whatsapp ?? true,
+          gerarRotaMaps: data.gerar_rota_maps ?? true,
+          duracaoAtendimentoPorTipo: localDuracao
+        };
+      } catch (err) {
+        console.warn("Falha ao carregar configuracoes_agenda:", err);
+        return null;
+      }
+    },
+
+    async salvar(config: any): Promise<boolean> {
+      try {
+        const ensureTimeFull = (val: string, fallback: string) => {
+          if (!val) return fallback;
+          const clean = String(val).trim();
+          if (clean.length === 5) return `${clean}:00`;
+          return clean;
+        };
+
+        const payload: any = {
+          hora_inicio_work: ensureTimeFull(config.horaInicioWork, "07:30:00"),
+          hora_fim_work: ensureTimeFull(config.horaFimWork, "18:00:00"),
+          intervalo_almoco_inicio: ensureTimeFull(config.intervaloAlmocoInicio, "12:00:00"),
+          intervalo_almoco_fim: ensureTimeFull(config.intervaloAlmocoFim, "13:30:00"),
+          exibir_fim_de_semana: Boolean(config.exibirFimDeSemana),
+          limite_os_por_tecnico_dia: Number(config.limiteOsPorTecnicoDia) || 4,
+          bloquear_sobreposicao: Boolean(config.bloquearSobreposicao),
+          notificar_tecnico_whatsapp: Boolean(config.notificarTecnicoWhatsapp),
+          gerar_rota_maps: Boolean(config.gerarRotaMaps),
+          updated_at: new Date().toISOString()
+        };
+
+        const { data: existing } = await supabase
+          .from("configuracoes_agenda")
+          .select("id")
+          .limit(1)
+          .maybeSingle();
+
+        if (existing?.id) {
+          const { error } = await supabase
+            .from("configuracoes_agenda")
+            .update(payload)
+            .eq("id", existing.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase
+            .from("configuracoes_agenda")
+            .insert([payload]);
+          if (error) throw error;
+        }
+
+        return true;
+      } catch (err) {
+        console.warn("Erro ao salvar configuracoes_agenda no Supabase:", err);
+        return false;
+      }
     }
   }
 };

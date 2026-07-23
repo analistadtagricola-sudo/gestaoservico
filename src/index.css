@@ -72,6 +72,11 @@ body {
 }
 
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
   /* Reset html & body for standard printing */
   html, body {
     background: #ffffff !important;
@@ -80,6 +85,8 @@ body {
     padding: 0 !important;
     height: auto !important;
     overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   /* Keep #root visible so React tree renders cleanly */
@@ -141,7 +148,7 @@ body {
     background: #ffffff !important;
   }
 
-  /* Printable containers formatting */
+  /* Printable containers formatting for A4 */
   #printable-os-invoice,
   #printable-os-campo,
   #printable-os,
@@ -149,13 +156,18 @@ body {
     display: block !important;
     visibility: visible !important;
     width: 100% !important;
-    max-width: none !important;
+    max-width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
     color: #000000 !important;
     position: relative !important;
     overflow: visible !important;
+  }
+
+  .print-break-inside-avoid {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
   
   /* Improve table printing */

@@ -7,6 +7,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Plus, 
+  PlusCircle, 
   Search, 
   RefreshCw, 
   Edit, 
@@ -35,10 +36,12 @@ import {
   Upload,
   ArrowLeft,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  MessageCircle
 } from "lucide-react";
 import { OrdemServico, Cliente, Implemento, Tecnico, Apontamento, Veiculo, TipoAtendimento } from "../types";
 import { API } from "../lib/api";
+import { formatOSNotificationText } from "../lib/googleAuth";
 
 interface OrdensServicoViewProps {
   ordens: OrdemServico[];
@@ -47,6 +50,7 @@ interface OrdensServicoViewProps {
   tecnicos: Tecnico[];
   onRefresh: () => Promise<void>;
   preSelectedOSId?: number | null;
+  preSelectedStatus?: string | null;
   onClearPreSelectedOS?: () => void;
 }
 
@@ -68,6 +72,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   tecnicos,
   onRefresh,
   preSelectedOSId,
+  preSelectedStatus,
   onClearPreSelectedOS
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
@@ -90,7 +95,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   // Form Fields State
   const [clienteId, setClienteId] = useState("");
   const [implementoId, setImplementoId] = useState("");
-  const [tipoAtendimento, setTipoAtendimento] = useState("ASSISTÊNCIA TÉCNICA");
+  const [tipoAtendimento, setTipoAtendimento] = useState("");
   const [prioridade, setPrioridade] = useState<"NORMAL" | "ALTA" | "URGENTE">("NORMAL");
   const [status, setStatus] = useState<OrdemServico["status"]>("ABERTA");
   const [isManualStatus, setIsManualStatus] = useState(false);
@@ -127,9 +132,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const [kmRodado, setKmRodado] = useState<number>(0);
   const [kmInicial, setKmInicial] = useState<number>(0);
   const [kmFinal, setKmFinal] = useState<number>(0);
-  const [valorKmUnitario, setValorKmUnitario] = useState<number>(2.5);
+  const [valorKmUnitario, setValorKmUnitario] = useState<number>(0);
   const [valorDeslocamento, setValorDeslocamento] = useState<number>(0);
-  const [valorHoraUnitario, setValorHoraUnitario] = useState<number>(150);
+  const [valorHoraUnitario, setValorHoraUnitario] = useState<number>(0);
   const [valorMaoObra, setValorMaoObra] = useState<number>(0);
   const [maoObraManual, setMaoObraManual] = useState(false);
   const [deslocamentoManual, setDeslocamentoManual] = useState(false);
@@ -242,6 +247,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const [numNotaFiscal, setNumNotaFiscal] = useState("");
   const [dataNotaFiscal, setDataNotaFiscal] = useState("");
   const [horimetroFinal, setHorimetroFinal] = useState<number | "">("");
+  const [localizacaoMaquina, setLocalizacaoMaquina] = useState("");
   const [revisaoExecutada, setRevisaoExecutada] = useState("");
 
   // XML NFe Import States
@@ -301,10 +307,10 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     }, 4000);
   };
 
-  const getUltimoHorimetroApontado = (implId: number) => {
+  const getUltimoHorimetroApontado = (implId: number | string) => {
     if (!implId) return "";
-    const related = ordens.filter(o => o.implemento_id === implId);
-    const otherOS = currentOS ? related.filter(o => o.id !== currentOS.id) : related;
+    const related = ordens.filter(o => String(o.implemento_id) === String(implId));
+    const otherOS = currentOS ? related.filter(o => String(o.id) !== String(currentOS.id)) : related;
     const maxHorimetro = otherOS.reduce((max, o) => {
       const val = Number(o.horimetro_final);
       return !isNaN(val) && val > max ? val : max;
@@ -312,17 +318,17 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     return maxHorimetro > 0 ? maxHorimetro : "";
   };
 
-  // Synchronize technician hourly and KM rates
+  // Synchronize technician hourly and KM rates from technician profile
   useEffect(() => {
     if (tecnicoId) {
-      const tech = tecnicos.find(t => t.id === Number(tecnicoId));
+      const tech = tecnicos.find(t => String(t.id) === String(tecnicoId));
       if (tech) {
         if (!currentOS) {
-          setValorKmUnitario(tech.valor_km || 2.5);
-          setValorHoraUnitario(tech.valor_hora || 150);
+          setValorKmUnitario(tech.valor_km || 0);
+          setValorHoraUnitario(tech.valor_hora || 0);
         } else {
-          if (valorKmUnitario === 2.5 || valorKmUnitario === 0) setValorKmUnitario(tech.valor_km || 2.5);
-          if (valorHoraUnitario === 150 || valorHoraUnitario === 0) setValorHoraUnitario(tech.valor_hora || 150);
+          if (!valorKmUnitario || valorKmUnitario === 0) setValorKmUnitario(tech.valor_km || 0);
+          if (!valorHoraUnitario || valorHoraUnitario === 0) setValorHoraUnitario(tech.valor_hora || 0);
         }
       }
     }
@@ -339,20 +345,36 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   // Removed automatic sync of Mão de Obra to avoid overwriting manual inputs
 
   // Open form directly when preselected ID changes
+  const processedPreSelectedRef = React.useRef<number | null>(null);
+
   useEffect(() => {
     if (preSelectedOSId !== undefined && preSelectedOSId !== null) {
-      if (preSelectedOSId === 0) {
-        // Create new
-        openForm(null);
-      } else {
-        const found = ordens.find(o => o.id === preSelectedOSId);
-        if (found) {
-          openForm(found);
+      if (processedPreSelectedRef.current !== preSelectedOSId) {
+        processedPreSelectedRef.current = preSelectedOSId;
+        if (preSelectedOSId === 0) {
+          // Create new
+          openForm(null);
+        } else {
+          const found = ordens.find(o => o.id === preSelectedOSId);
+          if (found) {
+            openForm(found);
+          }
         }
+        onClearPreSelectedOS?.();
       }
-      onClearPreSelectedOS?.();
+    } else {
+      processedPreSelectedRef.current = null;
     }
   }, [preSelectedOSId, ordens]);
+
+  // Set the list filter if a specific status has been pre-selected (e.g. from Dashboard status cards)
+  useEffect(() => {
+    if (preSelectedStatus) {
+      setSelectedStatus(preSelectedStatus);
+      setCurrentPage(1);
+      setIsFormOpen(false); // Make sure the list view is shown, closing any open form
+    }
+  }, [preSelectedStatus]);
 
   // Load and listen to Cost Centers updates from Settings
   useEffect(() => {
@@ -415,9 +437,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     setIsManualStatus(false);
     if (os) {
       setCurrentOS(os);
-      setClienteId(String(os.cliente_id));
-      setImplementoId(String(os.implemento_id));
-      setTipoAtendimento(os.tipo_atendimento || "ASSISTÊNCIA TÉCNICA");
+      setClienteId(os.cliente_id ? String(os.cliente_id) : "");
+      setImplementoId(os.implemento_id ? String(os.implemento_id) : "");
+      setTipoAtendimento(os.tipo_atendimento || "");
       setPrioridade(os.prioridade || "NORMAL");
       setStatus(os.status);
       setReclamacao(os.reclamacao);
@@ -437,10 +459,11 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setKmRodado(os.km_rodado_total || 0);
       setKmInicial(os.km_inicial || 0);
       setKmFinal(os.km_final || 0);
-      setValorKmUnitario(os.valor_km_unitario || 2.5);
+      const matchedTech = tecnicos.find(t => String(t.id) === String(os.tecnico_id));
+      setValorKmUnitario(os.valor_km_unitario !== undefined && os.valor_km_unitario !== null ? os.valor_km_unitario : (matchedTech?.valor_km || 0));
       setValorDeslocamento(os.valor_deslocamento || 0);
       setDeslocamentoManual(os.valor_deslocamento !== undefined && os.valor_deslocamento !== null && os.valor_deslocamento !== 0);
-      setValorHoraUnitario(os.valor_hora_unitario || 150);
+      setValorHoraUnitario(os.valor_hora_unitario !== undefined && os.valor_hora_unitario !== null ? os.valor_hora_unitario : (matchedTech?.valor_hora || 0));
       setValorMaoObra(os.valor_mao_obra || 0);
       setMaoObraManual(os.valor_mao_obra !== undefined && os.valor_mao_obra !== null && os.valor_mao_obra !== 0);
       setVeiculoUsado(os.veiculo_usado || "");
@@ -449,6 +472,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setNumNotaFiscal(os.num_nota_fiscal || "");
       setDataNotaFiscal(os.data_nota_fiscal ? os.data_nota_fiscal.substring(0, 10) : "");
       setHorimetroFinal(os.horimetro_final || getUltimoHorimetroApontado(os.implemento_id) || "");
+      const rawLocOS = os.localizacao_maquina || (os as any).localizacao || implementos.find(i => String(i.id) === String(os.implemento_id))?.localizacao || "";
+      setLocalizacaoMaquina((rawLocOS && String(rawLocOS).trim().toUpperCase() !== "EMPTY") ? String(rawLocOS).trim() : "");
       setRevisaoExecutada(os.revisao_executada || "");
 
       setComissaoCustomOpcao(os.comissao_custom_opcao || "automatico");
@@ -467,12 +492,12 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
           if (savedConfig) {
             const parsed = JSON.parse(savedConfig);
             if (parsed.regrasAtendimento && Array.isArray(parsed.regrasAtendimento)) {
-              isInternal = parsed.regrasAtendimento.some((r: any) => r.tipo.toLowerCase().trim() === (os.tipo_atendimento || "").toLowerCase().trim());
+              isInternal = parsed.regrasAtendimento.some((r: any) => (r?.tipo || "").toLowerCase().trim() === (os?.tipo_atendimento || "").toLowerCase().trim());
             }
           }
         } catch (e) {}
       }
-      setShowInternalDebitMode(false);
+      setShowInternalDebitMode(Boolean(isInternal));
       setCentroCustoDebito(os.centro_custo_debito || "");
       setObservacaoDebito(os.observacao_debito || "");
 
@@ -481,7 +506,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setCurrentOS(null);
       setClienteId("");
       setImplementoId("");
-      setTipoAtendimento("ASSISTÊNCIA TÉCNICA");
+      setTipoAtendimento("");
       setPrioridade("NORMAL");
       setStatus("ABERTA");
       setReclamacao("");
@@ -504,10 +529,10 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setKmRodado(0);
       setKmInicial(0);
       setKmFinal(0);
-      setValorKmUnitario(2.5);
+      setValorKmUnitario(0);
       setValorDeslocamento(0);
       setDeslocamentoManual(false);
-      setValorHoraUnitario(150);
+      setValorHoraUnitario(0);
       setValorMaoObra(0);
       setMaoObraManual(false);
       setVeiculoUsado("");
@@ -516,6 +541,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setNumNotaFiscal("");
       setDataNotaFiscal("");
       setHorimetroFinal("");
+      setLocalizacaoMaquina("");
 
       setComissaoCustomOpcao("automatico");
       setComissaoCustomValorTecnico(0);
@@ -577,11 +603,81 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     return Number(valorMaoObra || 0) + Number(valorDeslocamento || 0) + Number(outrosCustos || 0);
   };
 
+  const handleSendTechWhatsapp = (targetOS?: OrdemServico) => {
+    const activeOS = targetOS || currentOS;
+    const targetTechId = activeOS?.tecnico_id || (tecnicoId ? Number(tecnicoId) : null);
+    if (!targetTechId) {
+      showToast("Esta O.S. não possui técnico responsável atribuído.", "error");
+      return;
+    }
+    const tech = tecnicos.find(t => t.id === Number(targetTechId));
+    if (!tech || !tech.telefone) {
+      showToast(`O técnico ${tech?.nome || ""} não possui telefone cadastrado.`, "error");
+      return;
+    }
+    const phoneClean = (tech.telefone || "").replace(/\D/g, "");
+    if (!phoneClean) {
+      showToast("Número de telefone do técnico é inválido.", "error");
+      return;
+    }
+    const phoneFull = phoneClean.length <= 11 ? `55${phoneClean}` : phoneClean;
+    const clientObj = clientes.find(c => String(c.id) === String(activeOS?.cliente_id || clienteId));
+    const implObj = implementos.find(i => String(i.id) === String(activeOS?.implemento_id || implementoId));
+
+    const fullOSObject: Partial<OrdemServico> = {
+      ...(activeOS || {}),
+      tecnico_id: Number(targetTechId),
+      data_atendimento: activeOS?.data_atendimento || dataAtendimento,
+      hora_inicial: activeOS?.hora_inicial || horaInicial,
+      tipo_atendimento: activeOS?.tipo_atendimento || tipoAtendimento,
+      reclamacao: activeOS?.reclamacao || reclamacao,
+      prioridade: activeOS?.prioridade || prioridade
+    };
+
+    const msg = formatOSNotificationText(fullOSObject, tecnicos, clientObj, implObj);
+
+    const waUrl = `https://api.whatsapp.com/send?phone=${phoneFull}&text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, "_blank");
+  };
+
   const handleSaveOS = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!clienteId || !implementoId || !reclamacao.trim()) {
+    if (!clienteId || clienteId === "0" || !implementoId || implementoId === "0") {
       showToast("Preencha todos os campos obrigatórios (*)", "error");
       return null;
+    }
+
+    const reclamacaoVal = (reclamacao || "").trim() || "Atendimento Solicitado";
+
+    // Load Agenda configuration
+    let agendaCfg = { bloquearSobreposicao: true, notificarTecnicoWhatsapp: true };
+    try {
+      const storedCfg = localStorage.getItem("gst_agenda_config_v1");
+      if (storedCfg) {
+        agendaCfg = { ...agendaCfg, ...JSON.parse(storedCfg) };
+      }
+    } catch (e) {}
+
+    // Check schedule overlap if configured
+    if (agendaCfg.bloquearSobreposicao && tecnicoId && dataAtendimento) {
+      const selectedTechId = Number(tecnicoId);
+      const targetDateStr = String(dataAtendimento).substring(0, 10);
+      const existingOS = ordens.find(o => 
+        o.id !== currentOS?.id &&
+        o.status !== "CANCELADA" &&
+        (o.tecnico_id === selectedTechId || o.auxiliar_id === selectedTechId) &&
+        ((o.data_atendimento && o.data_atendimento.substring(0, 10) === targetDateStr) || (o.data_abertura && o.data_abertura.substring(0, 10) === targetDateStr))
+      );
+
+      if (existingOS) {
+        const confirmOverlap = window.confirm(
+          `⚠️ ALERTA DE SOBREPOSIÇÃO DE HORÁRIOS!\n\nO técnico selecionado já possui a O.S. Nº ${existingOS.numero_os} agendada para o dia ${targetDateStr}.\n\nDeseja continuar e salvar o agendamento mesmo assim?`
+        );
+        if (!confirmOverlap) {
+          setIsLoading(false);
+          return null;
+        }
+      }
     }
 
     setIsLoading(true);
@@ -593,9 +689,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       status: status,
       cliente_id: Number(clienteId),
       implemento_id: Number(implementoId),
-      tipo_atendimento: tipoAtendimento,
+      tipo_atendimento: tipoAtendimento || "ASSISTÊNCIA TÉCNICA",
       prioridade: prioridade,
-      reclamacao,
+      reclamacao: reclamacaoVal,
       observacao,
       solicitante,
 
@@ -624,6 +720,8 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       valor_total: valTotal,
       horas_trabalhadas_total: String(calcularTotalHorasTrabalhadas()),
       horimetro_final: horimetroFinal !== "" ? Number(horimetroFinal) : undefined,
+      localizacao_maquina: localizacaoMaquina.trim() || undefined,
+      localizacao: localizacaoMaquina.trim() || undefined,
       revisao_executada: revisaoExecutada,
 
       // Custom commission overrides fields
@@ -633,7 +731,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
       // Internal debit mode database fields
       modo_debito_interno: showInternalDebitMode,
-      classificacao_atendimento_interno: showInternalDebitMode ? tipoAtendimento : null,
+      classificacao_atendimento_interno: showInternalDebitMode ? (tipoAtendimento || "ASSISTÊNCIA TÉCNICA") : null,
       centro_custo_debito: centroCustoDebito || null,
       observacao_debito: showInternalDebitMode ? observacaoDebito : null,
       valor_referencia_servico: (() => {
@@ -643,7 +741,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
           const savedConfig = localStorage.getItem("gst_comissoes_config");
           if (savedConfig) {
             const parsed = JSON.parse(savedConfig);
-            const matched = parsed.regrasAtendimento?.find((r: any) => r.tipo.toLowerCase().trim() === tipoAtendimento.toLowerCase().trim());
+            const matched = parsed.regrasAtendimento?.find((r: any) => (r?.tipo || "").toLowerCase().trim() === (tipoAtendimento || "").toLowerCase().trim());
             const rule = matched || parsed.regraPadrao;
             if (rule) {
               if (rule.baseCalculo === "fixo") {
@@ -675,7 +773,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
           const savedConfig = localStorage.getItem("gst_comissoes_config");
           if (savedConfig) {
             const parsed = JSON.parse(savedConfig);
-            const matched = parsed.regrasAtendimento?.find((r: any) => r.tipo.toLowerCase().trim() === tipoAtendimento.toLowerCase().trim());
+            const matched = parsed.regrasAtendimento?.find((r: any) => (r?.tipo || "").toLowerCase().trim() === (tipoAtendimento || "").toLowerCase().trim());
             const rule = matched || parsed.regraPadrao;
             if (rule) {
               if (rule.baseCalculo === "fixo") return "Taxa Fixa";
@@ -706,24 +804,81 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         localStorage.setItem(`gst_os_pecas_${savedOS.id}`, JSON.stringify(pecas));
       }
 
+      // Sync machine location to equipment record
+      if (implementoId && localizacaoMaquina.trim()) {
+        const targetEquipment = implementos.find(i => String(i.id) === String(implementoId));
+        if (targetEquipment && targetEquipment.id) {
+          const locVal = localizacaoMaquina.trim();
+          try {
+            await API.implementos.atualizar(targetEquipment.id, {
+              ...targetEquipment,
+              localizacao: locVal
+            });
+            const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+            const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+            locMapping[targetEquipment.id] = locVal;
+            localStorage.setItem("gst_implemento_localizacao", JSON.stringify(locMapping));
+          } catch (eLoc) {
+            console.warn("Could not sync location to equipment on OS save:", eLoc);
+          }
+        }
+      }
+
       await onRefresh();
       // Reload details to get the synchronized apontamentos
       await loadOSDetails(savedOS);
       setCurrentOS(savedOS);
 
       // Sync form states with saved data to ensure UI matches DB exactly
+      if (savedOS.cliente_id) setClienteId(String(savedOS.cliente_id));
+      if (savedOS.implemento_id) setImplementoId(String(savedOS.implemento_id));
+      if (savedOS.tipo_atendimento) setTipoAtendimento(savedOS.tipo_atendimento);
+      if (savedOS.prioridade) setPrioridade(savedOS.prioridade);
+      if (savedOS.status) setStatus(savedOS.status);
+      if (savedOS.tecnico_id !== undefined) setTecnicoId(savedOS.tecnico_id ? String(savedOS.tecnico_id) : "");
+      if (savedOS.auxiliar_id !== undefined) setAuxiliarId(savedOS.auxiliar_id ? String(savedOS.auxiliar_id) : "");
+      if (savedOS.data_atendimento !== undefined) setDataAtendimento(savedOS.data_atendimento ? savedOS.data_atendimento.substring(0, 10) : "");
+      if (savedOS.data_termino !== undefined) setDataTermino(savedOS.data_termino ? savedOS.data_termino.substring(0, 10) : "");
+      if (savedOS.hora_inicial !== undefined) setHoraInicial(savedOS.hora_inicial || "");
+      if (savedOS.hora_final !== undefined) setHoraFinal(savedOS.hora_final || "");
       if (savedOS.reclamacao !== undefined) setReclamacao(savedOS.reclamacao);
       if (savedOS.servico_executado !== undefined) setServicoExecutado(savedOS.servico_executado);
       if (savedOS.observacao !== undefined) setObservacao(savedOS.observacao || "");
+      if (savedOS.solicitante !== undefined) setSolicitante(savedOS.solicitante || "");
       if (savedOS.numero_os) {
         // Force update of number if it was generated
         setCurrentOS(prev => prev ? { ...prev, numero_os: savedOS.numero_os } : savedOS);
       }
       if (savedOS.km_rodado_total !== undefined) setKmRodado(savedOS.km_rodado_total);
       if (savedOS.horimetro_final !== undefined) setHorimetroFinal(savedOS.horimetro_final);
-      if (savedOS.modo_debito_interno !== undefined) setShowInternalDebitMode(savedOS.modo_debito_interno || false);
+      if (savedOS.localizacao_maquina !== undefined || (savedOS as any).localizacao !== undefined) {
+        setLocalizacaoMaquina(savedOS.localizacao_maquina || (savedOS as any).localizacao || "");
+      }
+      if (savedOS.modo_debito_interno !== undefined) setShowInternalDebitMode(Boolean(savedOS.modo_debito_interno));
       if (savedOS.centro_custo_debito !== undefined) setCentroCustoDebito(savedOS.centro_custo_debito || "");
       if (savedOS.observacao_debito !== undefined) setObservacaoDebito(savedOS.observacao_debito || "");
+
+      // Auto notify technician via WhatsApp if enabled in agenda config
+      if (agendaCfg.notificarTecnicoWhatsapp && savedOS.tecnico_id) {
+        const targetTech = tecnicos.find(t => t.id === savedOS.tecnico_id);
+        if (targetTech && targetTech.telefone) {
+          const phoneClean = (targetTech.telefone || "").replace(/\D/g, "");
+          if (phoneClean) {
+            const phoneFull = phoneClean.length <= 11 ? `55${phoneClean}` : phoneClean;
+            const clientObj = clientes.find(c => String(c.id) === String(clienteId));
+            const implObj = implementos.find(i => String(i.id) === String(implementoId));
+
+            const msg = formatOSNotificationText(savedOS, tecnicos, clientObj, implObj);
+
+            const waUrl = `https://api.whatsapp.com/send?phone=${phoneFull}&text=${encodeURIComponent(msg)}`;
+            setTimeout(() => {
+              if (window.confirm(`Deseja enviar a notificação da O.S. ${savedOS.numero_os} via WhatsApp para o técnico ${targetTech.nome}?`)) {
+                window.open(waUrl, "_blank");
+              }
+            }, 300);
+          }
+        }
+      }
 
       return savedOS;
     } catch (err: any) {
@@ -767,13 +922,21 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       if (saved && saved.id) {
         await API.ordensServico.finalizar(saved.id);
         
-        // Also update equipment horímetro dynamically!
+        // Also update equipment horímetro & location dynamically!
         if (equipment && equipment.id) {
+          const locVal = localizacaoMaquina.trim() || equipment.localizacao;
           await API.implementos.atualizar(equipment.id, {
             ...equipment,
-            horimetro_atual: Number(horimetroFinal),
+            horimetro_atual: Number(horimetroFinal) || equipment.horimetro_atual,
+            localizacao: locVal,
             observacao: `${equipment.observacao || ""}\n[Atendimento O.S. ${saved.numero_os} em ${new Date().toLocaleDateString("pt-BR")} - Horímetro: ${horimetroFinal}h]`.trim()
           });
+          if (locVal) {
+            const locMappingStr = localStorage.getItem("gst_implemento_localizacao");
+            const locMapping = locMappingStr ? JSON.parse(locMappingStr) : {};
+            locMapping[equipment.id] = locVal;
+            localStorage.setItem("gst_implemento_localizacao", JSON.stringify(locMapping));
+          }
         }
 
         setStatus("FINALIZADA");
@@ -1392,17 +1555,19 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       {/* Toast Alert */}
       <AnimatePresence>
         {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: 50, x: "-50%" }}
-            animate={{ opacity: 1, y: 0, x: "-50%" }}
-            exit={{ opacity: 0, y: 20, x: "-50%" }}
-            className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-xl text-white font-semibold text-sm flex items-center gap-2 ${
-              toastMessage.type === "success" ? "bg-emerald-600" : toastMessage.type === "error" ? "bg-rose-600" : "bg-blue-600"
-            }`}
-          >
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{toastMessage.text}</span>
-          </motion.div>
+          <div className="fixed inset-x-0 bottom-8 md:left-64 z-[100] flex justify-center pointer-events-none px-4">
+            <motion.div
+              initial={{ opacity: 0, y: 30, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className={`pointer-events-auto px-6 py-3 rounded-lg shadow-2xl text-white font-semibold text-sm flex items-center gap-2.5 ${
+                toastMessage.type === "success" ? "bg-emerald-600" : toastMessage.type === "error" ? "bg-rose-600" : "bg-blue-600"
+              }`}
+            >
+              <CheckCircle2 className="w-5 h-5 shrink-0" />
+              <span>{toastMessage.text}</span>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -1677,6 +1842,14 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         <div className="space-y-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={closeForm}
+                className="p-2 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg text-gray-700 shadow-sm flex items-center gap-1.5 text-xs font-bold transition cursor-pointer"
+                title="Voltar para a lista de Ordens de Serviço"
+              >
+                <ArrowLeft className="w-4 h-4" /> Voltar
+              </button>
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="font-display text-2xl font-extrabold uppercase tracking-tight text-gray-800">
@@ -1868,6 +2041,12 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                           if (val) {
                             const lastH = getUltimoHorimetroApontado(Number(val));
                             setHorimetroFinal(lastH);
+                            const selectedImp = implementos.find(i => String(i.id) === String(val));
+                            if (selectedImp && selectedImp.localizacao && selectedImp.localizacao.toUpperCase() !== "EMPTY") {
+                              setLocalizacaoMaquina(selectedImp.localizacao);
+                            } else {
+                              setLocalizacaoMaquina("");
+                            }
                           } else {
                             setHorimetroFinal("");
                           }
@@ -1891,6 +2070,20 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                       />
                     </div>
                   </div>
+
+                  <div className="mt-3">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-brand-red" /> Localização / Fazenda da Máquina
+                    </label>
+                    <input
+                      type="text"
+                      value={localizacaoMaquina}
+                      onChange={(e) => setLocalizacaoMaquina(e.target.value)}
+                      placeholder="Ex: Fazenda Santa Maria - Gleba 2, Ariquemes - RO"
+                      disabled={status === "FINALIZADA" || status === "CANCELADA"}
+                      className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red"
+                    />
+                  </div>
                 </div>
 
                 {/* Service Metadata */}
@@ -1910,6 +2103,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                         disabled={status === "FINALIZADA" || status === "CANCELADA"}
                         className="w-full border border-gray-200 rounded px-2.5 py-1.5 text-xs bg-gray-50 focus:bg-white focus:border-brand-red"
                       >
+                        <option value="">Selecione...</option>
                         {tiposAtendimentoList.length > 0 ? (
                           <>
                             {tiposAtendimentoList
@@ -2860,13 +3054,13 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                           className={`text-[10px] uppercase font-bold px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 border shadow-sm ${
                             showInternalDebitMode 
                               ? 'bg-amber-600 text-white border-amber-700 hover:bg-amber-700' 
-                              : 'bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
                           }`}
                         >
                           {showInternalDebitMode ? (
-                            <><X className="w-3 h-3" /> Sair do Modo Interno</>
+                            <><X className="w-3 h-3" /> Débito Interno Ativo (Desativar)</>
                           ) : (
-                            <><CheckCircle2 className="w-3 h-3" /> Serviço de Débito Interno</>
+                            <><PlusCircle className="w-3 h-3" /> Ativar Débito Interno</>
                           )}
                         </button>
                       </div>
@@ -3165,36 +3359,47 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
           </div>
 
           {/* Form Actions Footer */}
-          <div className="os-form-footer flex justify-between items-center bg-white p-4 border-t border-gray-100 rounded-b-xl gap-4">
+          <div className="os-form-footer flex flex-col sm:flex-row justify-between items-center bg-white p-4 border-t border-gray-100 rounded-b-xl gap-3">
             <button
               type="button"
               onClick={closeForm}
-              className="p-2 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg text-gray-700 shadow-sm flex items-center gap-1.5 text-xs font-bold transition"
+              className="p-2 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg text-gray-700 shadow-sm flex items-center gap-1.5 text-xs font-bold transition shrink-0 uppercase"
             >
-              <ArrowLeft className="w-4 h-4" /> Voltar à Lista
+              <ArrowLeft className="w-4 h-4 text-gray-500" />
+              <span>Voltar</span>
             </button>
 
-            <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto">
               {currentOS && (
                 <>
                   <button
                     type="button"
+                    onClick={() => handleSendTechWhatsapp(currentOS)}
+                    className="btn bg-emerald-700 hover:bg-emerald-800 text-white text-xs px-3 py-2 font-bold flex items-center gap-1.5 cursor-pointer shadow-sm rounded-lg transition uppercase tracking-wider"
+                    title="Enviar dados do agendamento via WhatsApp para o Técnico responsável"
+                  >
+                    <MessageCircle className="w-4 h-4 text-white" />
+                    <span>TÉCNICO</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setPrintPreviewOS(currentOS)}
-                    className="btn bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2 font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
-                    title="Visualizar Impressão Completa da O.S."
+                    className="btn bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-2 font-bold flex items-center gap-1.5 cursor-pointer shadow-sm rounded-lg transition uppercase tracking-wider"
+                    title="Visualizar Fatura / Impressão Completa"
                   >
                     <Printer className="w-4 h-4 text-white" />
-                    <span>IMPRIMIR O.S. (FATURA)</span>
+                    <span>FATURA</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setPrintPreviewCampoOS(currentOS)}
-                    className="btn bg-blue-600 hover:bg-blue-700 text-white text-xs py-2 font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
-                    title="Gerar Relatório de Campo em Branco para Preenchimento do Técnico"
+                    className="btn bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-2 font-bold flex items-center gap-1.5 cursor-pointer shadow-sm rounded-lg transition uppercase tracking-wider"
+                    title="Gerar Relatório de Campo"
                   >
                     <ClipboardList className="w-4 h-4 text-white" />
-                    <span>GERAR RELATÓRIO DE CAMPO</span>
+                    <span>RELATÓRIO</span>
                   </button>
                 </>
               )}
@@ -3204,27 +3409,27 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   <button
                     type="button"
                     onClick={handleCancelOS}
-                    className="btn bg-gray-400 hover:bg-gray-500 text-white text-xs py-2 font-bold"
+                    className="btn bg-gray-400 hover:bg-gray-500 text-white text-xs px-3 py-2 font-bold rounded-lg transition uppercase tracking-wider"
                   >
-                    Cancelar O.S.
+                    CANCELAR
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleSaveOS()}
-                    className="btn bg-brand-ink hover:bg-gray-800 text-white text-xs py-2 font-bold flex items-center gap-1.5"
+                    className="btn bg-brand-ink hover:bg-gray-800 text-white text-xs px-3 py-2 font-bold flex items-center gap-1.5 rounded-lg transition uppercase tracking-wider"
                   >
                     <Save className="w-4 h-4" />
-                    Salvar Progresso
+                    <span>SALVAR</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleFinalizeOS}
-                    className="btn bg-brand-red hover:bg-brand-red-dark text-white text-xs py-2 font-bold flex items-center gap-1.5 animate-pulse"
+                    className="btn bg-brand-red hover:bg-brand-red-dark text-white text-xs px-3 py-2 font-bold flex items-center gap-1.5 rounded-lg transition uppercase tracking-wider"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    Finalizar O.S.
+                    <span>FINALIZAR</span>
                   </button>
                 </>
               )}
@@ -3271,7 +3476,18 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 {/* Header of Invoice */}
                 <div className="border-b-4 border-brand-red pb-4 flex justify-between items-start gap-4">
                   <div className="flex items-center gap-3">
-                    <span className="text-4xl">🚜</span>
+                    {company?.logo ? (
+                      <img 
+                        src={company.logo} 
+                        alt="Logo" 
+                        className="h-14 max-w-[220px] object-contain" 
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 bg-[#E30613] rounded-lg flex items-center justify-center text-white font-black text-2xl tracking-tighter shadow-sm shrink-0">
+                        {company?.nome ? company.nome.charAt(0).toUpperCase() : "D"}
+                      </div>
+                    )}
                     <div>
                       <h1 className="font-display text-lg font-black uppercase text-gray-900 tracking-tight">
                         {company?.nome || "Oficina Mecânica Agrícola"}
@@ -3383,6 +3599,11 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                       <span className="text-gray-400 font-bold">Horímetro:</span>
                       <span className="col-span-2 text-gray-700 font-mono font-bold">
                         {printPreviewOS.horimetro_final || printPreviewOS.implementos?.horimetro || "—"} h
+                      </span>
+
+                      <span className="text-gray-400 font-bold">Localização:</span>
+                      <span className="col-span-2 text-gray-700 font-semibold">
+                        {printPreviewOS.localizacao_maquina || printPreviewOS.implementos?.localizacao || "—"}
                       </span>
                     </div>
                   </div>
@@ -3497,15 +3718,15 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   } catch (e) { console.warn(e); }
                   const sumPecas = parsedPecas.reduce((acc, curr) => acc + (curr.xml_imported ? 0 : (curr.quantidade * curr.valor_unitario)), 0);
 
-                  const tech = tecnicos.find(t => t.id === printPreviewOS.tecnico_id);
-                  const rateTech = printPreviewOS.valor_hora_unitario || tech?.valor_hora || 150;
-                  const duration = printPreviewOS.apontamentos?.reduce((acc, curr) => acc + parseFloat(curr.horas_trabalhadas || "0"), 0) || 0;
+                  const tech = tecnicos.find(t => String(t.id) === String(printPreviewOS.tecnico_id));
+                  const rateTech = printPreviewOS.valor_hora_unitario || tech?.valor_hora || 0;
+                  const duration = printPreviewOS.apontamentos?.reduce((acc, curr) => acc + Number(curr.horas_trabalhadas || 0), 0) || 0;
                   const sumTech = (printPreviewOS.valor_mao_obra !== undefined && printPreviewOS.valor_mao_obra > 0)
                     ? printPreviewOS.valor_mao_obra
                     : duration * rateTech;
 
                   const km = Number(printPreviewOS.km_rodado_total || printPreviewOS.km_rodado || 0);
-                  const rateKm = printPreviewOS.valor_km_unitario || 2.50;
+                  const rateKm = printPreviewOS.valor_km_unitario || tech?.valor_km || 0;
                   const sumDesloc = (printPreviewOS.valor_deslocamento !== undefined && printPreviewOS.valor_deslocamento > 0)
                     ? printPreviewOS.valor_deslocamento
                     : km * rateKm;
@@ -3613,60 +3834,60 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
 
             {/* Printable Document Area */}
             <div className="flex-1 overflow-y-auto p-8 print:p-0 bg-white font-sans text-xs text-black printable-area" id="printable-os-campo">
-              <div className="max-w-[850px] mx-auto space-y-4 border border-black p-5 rounded-xl bg-white print:max-w-none print:border-none print:p-0">
+              <div className="max-w-[820px] print:max-w-none print:w-full mx-auto space-y-1.5 print:space-y-0.5 border border-black p-3 print:p-0 rounded-xl print:rounded-none bg-white print:border-none">
                 
                 {/* 1. TOP HEADER BRAND BOX */}
-                <div className="grid grid-cols-12 border border-black rounded-lg overflow-hidden bg-white">
+                <div className="grid grid-cols-12 border border-black rounded-lg overflow-hidden bg-white print-break-inside-avoid">
                   {/* Brand Logo Column */}
-                  <div className="col-span-4 p-3 flex flex-col justify-between items-center text-center bg-white border-r border-black min-h-[64px]">
+                  <div className="col-span-4 p-1 flex flex-col justify-between items-center text-center bg-white border-r border-black min-h-[62px]">
                     {company?.logo ? (
-                      <div className="max-h-12 flex items-center justify-center">
+                      <div className="h-14 flex items-center justify-center my-auto w-full p-0.5 overflow-hidden">
                         <img 
                           src={company.logo} 
                           alt="Logo" 
-                          className="max-h-11 max-w-full object-contain" 
+                          className="h-14 max-h-14 w-auto max-w-full object-contain" 
                           referrerPolicy="no-referrer"
                         />
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2 justify-center">
+                      <div className="flex items-center gap-2 justify-center my-auto py-0.5">
                         {/* Stylized Red Logo Icon with dynamic brand name */}
-                        <div className="w-10 h-10 bg-[#E30613] rounded-lg flex items-center justify-center text-white font-black text-2xl tracking-tighter shadow-sm shrink-0">
+                        <div className="w-11 h-11 bg-[#E30613] rounded-lg flex items-center justify-center text-white font-black text-2xl tracking-tighter shadow-sm shrink-0 border border-red-700">
                           {company?.nome ? company.nome.charAt(0).toUpperCase() : "D"}
                         </div>
                         <div className="text-left leading-none">
-                          <span className="font-display font-extrabold text-lg text-black tracking-tight block">
+                          <span className="font-display font-black text-base text-black tracking-tight block">
                             {company?.nome ? company.nome.split(" ")[0].substring(0, 10).toUpperCase() : "DANIEL"}
                           </span>
-                          <span className="text-[7px] font-bold text-gray-500 uppercase tracking-widest block">
+                          <span className="text-[7.5px] font-extrabold text-gray-700 uppercase tracking-widest block mt-0.5">
                             {company?.nome ? company.nome.split(" ").slice(1).join(" ").substring(0, 20).toUpperCase() : "TRATORES AGRÍCOLA"}
                           </span>
                         </div>
                       </div>
                     )}
-                    <div className="text-[8px] font-black text-black uppercase tracking-wide mt-2 border-t border-gray-150 pt-1 w-full text-center">
+                    <div className="text-[7px] font-black text-black uppercase tracking-wide mt-0.5 border-t border-gray-200 pt-0.5 w-full text-center">
                       {company?.subtitulo || "SEMPRE AO LADO DE QUEM PRODUZ"}
                     </div>
                   </div>
 
                   {/* Company Info Column */}
-                  <div className="col-span-5 p-2.5 flex flex-col justify-center text-center text-[9px] border-r border-black font-sans leading-relaxed text-gray-700 bg-white">
-                    <strong className="text-[10.5px] font-black text-black uppercase">
+                  <div className="col-span-5 p-1 flex flex-col justify-center text-center text-[7.5px] border-r border-black font-sans leading-tight text-gray-800 bg-white">
+                    <strong className="text-[9px] font-black text-black uppercase">
                       {company?.nome || "Daniel Tratores Agrícola Ltda"}
                     </strong>
                     {company?.cnpj || company?.inscricao_estadual ? (
-                      <span className="font-semibold text-[8.5px]">
+                      <span className="font-semibold text-[7px]">
                         {company.cnpj ? `CNPJ: ${company.cnpj}` : ""}
                         {company.cnpj && company.inscricao_estadual ? " – " : ""}
                         {company.inscricao_estadual ? `INSC. EST. ${company.inscricao_estadual}` : ""}
                       </span>
                     ) : (
-                      <span className="font-semibold text-[8.5px]">CNPJ: 11.994.044/0001-09 – INSC. EST. 0000000306735-1</span>
+                      <span className="font-semibold text-[7px]">CNPJ: 11.994.044/0001-09 – INSC. EST. 0000000306735-1</span>
                     )}
-                    <span className="text-[8.5px]">
+                    <span className="text-[7px]">
                       {company?.endereco || "Rodovia BR 364, KM 516, Nº 3949 – Ariquemes/ RO – 76877-225"}
                     </span>
-                    <span className="font-semibold text-[8.5px]">
+                    <span className="font-semibold text-[7px]">
                       {company?.telefone || company?.email ? (
                         <>
                           {company.telefone ? `Fone ${company.telefone}` : ""}
@@ -3680,60 +3901,60 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                   </div>
 
                   {/* Report Number Block */}
-                  <div className="col-span-3 p-3 flex flex-col justify-center items-center text-center bg-white">
-                    <span className="text-[10px] font-bold text-gray-800 uppercase tracking-wider">Relatório Nº</span>
-                    <strong className="text-xl font-mono text-[#E30613] font-black tracking-tight mt-0.5">
+                  <div className="col-span-3 p-1 flex flex-col justify-center items-center text-center bg-white">
+                    <span className="text-[8px] font-bold text-gray-800 uppercase tracking-wider">Relatório Nº</span>
+                    <strong className="text-base font-mono text-[#E30613] font-black tracking-tight mt-0.5">
                       {printPreviewCampoOS.numero_os}
                     </strong>
                   </div>
                 </div>
 
                 {/* 2. MAIN REPORT TITLE */}
-                <div className="text-center relative py-1">
-                  <h2 className="text-lg font-black uppercase text-black tracking-widest border-b border-black pb-0.5 inline-block">
+                <div className="text-center relative py-0 print-break-inside-avoid">
+                  <h2 className="text-xs font-black uppercase text-black tracking-widest border-b border-black pb-0.5 inline-block">
                     RELATÓRIO DE CAMPO
                   </h2>
-                  <div className="text-[8px] font-bold text-black absolute left-0 bottom-0">
+                  <div className="text-[6.5px] font-bold text-black absolute left-0 bottom-0">
                     *Obrigatório o preenchimento de todos os campos.
                   </div>
                 </div>
 
                 {/* 3. DADOS DO CLIENTE */}
-                <div className="border border-black rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-3 py-1 border-b border-black font-bold uppercase tracking-wide text-[9.5px] text-black">
+                <div className="border border-black rounded-lg overflow-hidden print-break-inside-avoid">
+                  <div className="bg-gray-100 px-2 py-0.5 border-b border-black font-bold uppercase tracking-wide text-[8px] text-black">
                     DADOS DO CLIENTE
                   </div>
-                  <div className="p-3 space-y-2 text-[10.5px]">
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Nome:</span>
-                      <span className="border-b border-gray-400 font-bold text-gray-900 px-1 py-0.5 min-h-[20px] min-w-[280px] flex-1">
+                  <div className="p-1 space-y-0.5 text-[9px]">
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Nome:</span>
+                      <span className="border-b border-gray-400 font-bold text-black px-1 py-0 min-h-[15px] min-w-[220px] flex-1">
                         {printPreviewCampoOS.clientes?.razao_social || ""}
                       </span>
                       
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Responsável:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[140px] flex-1">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Responsável:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[110px] flex-1">
                         {printPreviewCampoOS.clientes?.nome_contato || ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Data:</span>
-                      <span className="border-b border-gray-400 font-mono text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[80px] text-center">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Data:</span>
+                      <span className="border-b border-gray-400 font-mono text-black px-1 py-0 min-h-[15px] min-w-[65px] text-center">
                         {printPreviewCampoOS.data_atendimento ? new Date(printPreviewCampoOS.data_atendimento).toLocaleDateString("pt-BR") : ""}
                       </span>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Cidade:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[180px] flex-1">
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Cidade:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[140px] flex-1">
                         {printPreviewCampoOS.clientes?.cidade || ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Estado:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[60px] text-center">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Estado:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[40px] text-center">
                         {printPreviewCampoOS.clientes?.uf || ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Telefone:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[150px] flex-1">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Telefone:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[110px] flex-1">
                         {printPreviewCampoOS.clientes?.telefone || ""}
                       </span>
                     </div>
@@ -3741,65 +3962,65 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 </div>
 
                 {/* 4. DADOS DA MÁQUINA */}
-                <div className="border border-black rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-3 py-1 border-b border-black font-bold uppercase tracking-wide text-[9.5px] text-black">
+                <div className="border border-black rounded-lg overflow-hidden print-break-inside-avoid">
+                  <div className="bg-gray-100 px-2 py-0.5 border-b border-black font-bold uppercase tracking-wide text-[8px] text-black">
                     DADOS DA MÁQUINA
                   </div>
-                  <div className="p-3 space-y-2 text-[10.5px]">
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Modelo:</span>
-                      <span className="border-b border-gray-400 font-bold text-gray-900 px-1 py-0.5 min-h-[20px] min-w-[200px] flex-1">
+                  <div className="p-1 space-y-0.5 text-[9px]">
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Modelo:</span>
+                      <span className="border-b border-gray-400 font-bold text-black px-1 py-0 min-h-[15px] min-w-[150px] flex-1">
                         {printPreviewCampoOS.implementos?.modelo || ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Nº de série:</span>
-                      <span className="border-b border-gray-400 font-mono text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[200px] flex-1">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Nº de série:</span>
+                      <span className="border-b border-gray-400 font-mono text-black px-1 py-0 min-h-[15px] min-w-[150px] flex-1">
                         {printPreviewCampoOS.implementos?.numero_serie || ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Trabalho:</span>
-                      <span className="flex items-center gap-1 min-w-[100px] font-bold">
-                        <span className="inline-block w-3.5 h-3.5 border border-black rounded-sm mr-1"></span> Horas ______
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Trabalho:</span>
+                      <span className="flex items-center gap-1 min-w-[80px] font-bold">
+                        <span className="inline-block w-2.5 h-2.5 border border-black rounded-xs mr-1"></span> Horas ______
                       </span>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Potência:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[120px] flex-1">
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Potência:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[80px] flex-1">
                         {printPreviewCampoOS.implementos?.potencia ? `${printPreviewCampoOS.implementos.potencia} CV` : ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">RPM:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[120px] flex-1">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">RPM:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[80px] flex-1">
                         {printPreviewCampoOS.implementos?.rpm || ""}
                       </span>
 
-                      <span className="flex items-center gap-1 min-w-[100px] font-bold">
-                        <span className="inline-block w-3.5 h-3.5 border border-black rounded-sm mr-1"></span> Hectares ____
+                      <span className="flex items-center gap-1 min-w-[80px] font-bold">
+                        <span className="inline-block w-2.5 h-2.5 border border-black rounded-xs mr-1"></span> Hectares ____
                       </span>
                     </div>
                   </div>
                 </div>
 
                 {/* 5. DADOS DA ASSISTÊNCIA */}
-                <div className="border border-black rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-3 py-1 border-b border-black font-bold uppercase tracking-wide text-[9.5px] text-black">
+                <div className="border border-black rounded-lg overflow-hidden print-break-inside-avoid">
+                  <div className="bg-gray-100 px-2 py-0.5 border-b border-black font-bold uppercase tracking-wide text-[8px] text-black">
                     DADOS DA ASSISTÊNCIA
                   </div>
-                  <div className="p-3 text-[10.5px]">
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Técnico:</span>
-                      <span className="border-b border-gray-400 font-bold text-gray-900 px-1 py-0.5 min-h-[20px] min-w-[180px] flex-1">
+                  <div className="p-1 text-[9px]">
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Técnico:</span>
+                      <span className="border-b border-gray-400 font-bold text-black px-1 py-0 min-h-[15px] min-w-[140px] flex-1">
                         {tecnicos.find(t => t.id === printPreviewCampoOS.tecnico_id)?.apelido || tecnicos.find(t => t.id === printPreviewCampoOS.tecnico_id)?.nome || ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Auxiliar Técnico:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[180px] flex-1">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Auxiliar Técnico:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[140px] flex-1">
                         {tecnicos.find(t => t.id === printPreviewCampoOS.auxiliar_id)?.apelido || tecnicos.find(t => t.id === printPreviewCampoOS.auxiliar_id)?.nome || ""}
                       </span>
 
-                      <span className="font-bold uppercase text-[9.5px] text-gray-700 shrink-0">Telefone:</span>
-                      <span className="border-b border-gray-400 font-semibold text-gray-800 px-1 py-0.5 min-h-[20px] min-w-[120px]">
+                      <span className="font-bold uppercase text-[8px] text-gray-800 shrink-0">Telefone:</span>
+                      <span className="border-b border-gray-400 font-semibold text-black px-1 py-0 min-h-[15px] min-w-[90px]">
                         {tecnicos.find(t => t.id === printPreviewCampoOS.tecnico_id)?.telefone || ""}
                       </span>
                     </div>
@@ -3807,30 +4028,30 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 </div>
 
                 {/* 6. APONTAMENTO DE SERVIÇO */}
-                <div className="border border-black rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-3 py-1 border-b border-black font-bold uppercase tracking-wide text-[9.5px] text-black">
+                <div className="border border-black rounded-lg overflow-hidden print-break-inside-avoid">
+                  <div className="bg-gray-100 px-2 py-0.5 border-b border-black font-bold uppercase tracking-wide text-[8px] text-black">
                     APONTAMENTO DE SERVIÇO
                   </div>
-                  <table className="w-full text-center border-collapse text-[10px]">
+                  <table className="w-full text-center border-collapse text-[8.5px]">
                     <thead>
-                      <tr className="border-b border-black font-bold text-gray-700 text-[9px] uppercase bg-white">
-                        <th className="p-1.5 border-r border-black w-24">Data</th>
-                        <th className="p-1.5 border-r border-black w-24">Hora Inicio</th>
-                        <th className="p-1.5 border-r border-black w-28">Intervalo Início</th>
-                        <th className="p-1.5 border-r border-black w-28">Intervalo Fim</th>
-                        <th className="p-1.5 border-r border-black w-24">Hora Final</th>
-                        <th className="p-1.5 w-24">Total Horas</th>
+                      <tr className="border-b border-black font-bold text-gray-800 text-[7.5px] uppercase bg-white">
+                        <th className="p-0.5 border-r border-black w-24">Data</th>
+                        <th className="p-0.5 border-r border-black w-24">Hora Inicio</th>
+                        <th className="p-0.5 border-r border-black w-28">Intervalo Início</th>
+                        <th className="p-0.5 border-r border-black w-28">Intervalo Fim</th>
+                        <th className="p-0.5 border-r border-black w-24">Hora Final</th>
+                        <th className="p-0.5 w-24">Total Horas</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {[...Array(3)].map((_, i) => (
-                        <tr key={i} className="border-b border-black last:border-b-0 h-[28px] bg-white">
-                          <td className="p-1 border-r border-black font-mono text-gray-400">___ / ___ / ____</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">____ : ____</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">____ : ____</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">____ : ____</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">____ : ____</td>
-                          <td className="p-1 font-mono text-gray-400">____________</td>
+                      {[...Array(2)].map((_, i) => (
+                        <tr key={i} className="border-b border-black last:border-b-0 h-[18px] bg-white">
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">___ / ___ / ____</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">____ : ____</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">____ : ____</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">____ : ____</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">____ : ____</td>
+                          <td className="p-0 font-mono text-gray-500 text-[8px]">____________</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3838,30 +4059,30 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 </div>
 
                 {/* 7. APONTAMENTO DE DESLOCAMENTO */}
-                <div className="border border-black rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-3 py-1 border-b border-black font-bold uppercase tracking-wide text-[9.5px] text-black">
+                <div className="border border-black rounded-lg overflow-hidden print-break-inside-avoid">
+                  <div className="bg-gray-100 px-2 py-0.5 border-b border-black font-bold uppercase tracking-wide text-[8px] text-black">
                     APONTAMENTO DE DESLOCAMENTO
                   </div>
-                  <table className="w-full text-center border-collapse text-[10px]">
+                  <table className="w-full text-center border-collapse text-[8.5px]">
                     <thead>
-                      <tr className="border-b border-black font-bold text-gray-700 text-[9px] uppercase bg-white">
-                        <th className="p-1.5 border-r border-black w-24">Data</th>
-                        <th className="p-1.5 border-r border-black w-24">Hora Inicio</th>
-                        <th className="p-1.5 border-r border-black w-24">Hora Final</th>
-                        <th className="p-1.5 border-r border-black w-28">KM Inicial</th>
-                        <th className="p-1.5 border-r border-black w-28">KM Final</th>
-                        <th className="p-1.5 w-24">Total KM</th>
+                      <tr className="border-b border-black font-bold text-gray-800 text-[7.5px] uppercase bg-white">
+                        <th className="p-0.5 border-r border-black w-24">Data</th>
+                        <th className="p-0.5 border-r border-black w-24">Hora Inicio</th>
+                        <th className="p-0.5 border-r border-black w-24">Hora Final</th>
+                        <th className="p-0.5 border-r border-black w-28">KM Inicial</th>
+                        <th className="p-0.5 border-r border-black w-28">KM Final</th>
+                        <th className="p-0.5 w-24">Total KM</th>
                       </tr>
                     </thead>
                     <tbody>
                       {[...Array(2)].map((_, i) => (
-                        <tr key={i} className="border-b border-black last:border-b-0 h-[28px] bg-white">
-                          <td className="p-1 border-r border-black font-mono text-gray-400">___ / ___ / ____</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">____ : ____</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">____ : ____</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">________________</td>
-                          <td className="p-1 border-r border-black font-mono text-gray-400">________________</td>
-                          <td className="p-1 font-mono text-gray-400">____________</td>
+                        <tr key={i} className="border-b border-black last:border-b-0 h-[18px] bg-white">
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">___ / ___ / ____</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">____ : ____</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">____ : ____</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">________________</td>
+                          <td className="p-0 border-r border-black font-mono text-gray-500 text-[8px]">________________</td>
+                          <td className="p-0 font-mono text-gray-500 text-[8px]">____________</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3869,65 +4090,65 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
                 </div>
 
                 {/* 8. DECLARATIVE CLAUSES & TERMS */}
-                <div className="border border-black rounded-lg p-2.5 space-y-2 bg-white text-[9px] leading-snug">
-                  <span className="font-bold text-black uppercase block">Os Signatários deste certificado (usuário e revenda) declaram que:</span>
-                  <div className="space-y-1.5">
-                    <div className="flex items-start gap-1.5">
-                      <span className="inline-block w-3 h-3 border border-black rounded-sm shrink-0 mt-0.5"></span>
-                      <p className="text-gray-800">
+                <div className="border border-black rounded-lg p-1 space-y-0.5 bg-white text-[7.5px] leading-tight print-break-inside-avoid">
+                  <span className="font-bold text-black uppercase block text-[7.5px]">Os Signatários deste certificado (usuário e revenda) declaram que:</span>
+                  <div className="space-y-0.5">
+                    <div className="flex items-start gap-1">
+                      <span className="inline-block w-2 h-2 border border-black rounded-xs shrink-0 mt-0.5"></span>
+                      <p className="text-gray-900">
                         A máquina acima especificada foi colocada em serviço segundo as instruções da fábrica e da revenda pelo usuário abaixo identificado.
                       </p>
                     </div>
-                    <div className="flex items-start gap-1.5">
-                      <span className="inline-block w-3 h-3 border border-black rounded-sm shrink-0 mt-0.5"></span>
-                      <p className="text-gray-800">
+                    <div className="flex items-start gap-1">
+                      <span className="inline-block w-2 h-2 border border-black rounded-xs shrink-0 mt-0.5"></span>
+                      <p className="text-gray-900">
                         O usuário recebeu da revenda todas as instruções relativas à utilização e manutenção da máquina e aos dispositivos de segurança que a equipam, conforme descrito no manual de instruções entregue.
                       </p>
                     </div>
-                    <div className="flex items-start gap-1.5">
-                      <span className="inline-block w-3 h-3 border border-black rounded-sm shrink-0 mt-0.5"></span>
-                      <p className="text-gray-800">
+                    <div className="flex items-start gap-1">
+                      <span className="inline-block w-2 h-2 border border-black rounded-xs shrink-0 mt-0.5"></span>
+                      <p className="text-gray-900">
                         O usuário foi informado pela revenda das condições de garantia.
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex gap-12 pt-1 font-bold text-black">
-                    <div className="flex items-center gap-1.5">
-                      <span className="inline-block w-3.5 h-3.5 border border-black rounded-sm"></span> Assistência com pedido de garantia
+                  <div className="flex gap-6 pt-0.5 font-bold text-black text-[7.5px]">
+                    <div className="flex items-center gap-1">
+                      <span className="inline-block w-2 h-2 border border-black rounded-xs"></span> Assistência com pedido de garantia
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="inline-block w-3.5 h-3.5 border border-black rounded-sm"></span> Visita técnica para regulagem/ montagem de peças
+                    <div className="flex items-center gap-1">
+                      <span className="inline-block w-2 h-2 border border-black rounded-xs"></span> Visita técnica para regulagem/ montagem de peças
                     </div>
                   </div>
                 </div>
 
-                {/* 9. NÃO CONFORMIDADE BLOCK */}
-                <div className="border border-black rounded-lg overflow-hidden">
-                  <div className="bg-gray-100 px-3 py-1 border-b border-black font-bold uppercase tracking-wide text-[9.5px] text-black">
-                    NÃO CONFORMIDADE
+                {/* 9. NÃO CONFORMIDADE BLOCK (EXPANDED WRITING AREA WITH 18 LINES) */}
+                <div className="border border-black rounded-lg overflow-hidden print-break-inside-avoid">
+                  <div className="bg-gray-100 px-2 py-0.5 border-b border-black font-bold uppercase tracking-wide text-[8px] text-black">
+                    NÃO CONFORMIDADE / OBSERVAÇÕES DE CAMPO
                   </div>
-                  <div className="p-3 space-y-4 bg-white">
-                    {[...Array(22)].map((_, i) => (
-                      <div key={i} className="border-b border-gray-300 h-2"></div>
+                  <div className="px-2 py-0.5 bg-white">
+                    {[...Array(18)].map((_, i) => (
+                      <div key={i} className="border-b border-gray-400 h-[19px] w-full"></div>
                     ))}
                   </div>
                 </div>
 
                 {/* 10. DECLARATION CLAUSE AND SIGNATURES */}
-                <div className="space-y-4 pt-2">
-                  <p className="font-bold italic text-black text-[9.5px]">
+                <div className="space-y-1 pt-0.5 print-break-inside-avoid">
+                  <p className="font-bold italic text-black text-[8px]">
                     Declaro que li e estou de acordo com todos os termos acima.
                   </p>
 
-                  <div className="grid grid-cols-2 gap-16 text-center text-[10px] pt-4">
-                    <div className="space-y-1">
+                  <div className="grid grid-cols-2 gap-8 text-center text-[8.5px] pt-1">
+                    <div className="space-y-0.5">
                       <div className="font-bold text-black">____________________________________________________</div>
-                      <div className="font-black text-gray-800 uppercase tracking-wide">Cliente/ Responsável</div>
+                      <div className="font-black text-black uppercase tracking-wide">Cliente/ Responsável</div>
                     </div>
-                    <div className="space-y-1">
+                    <div className="space-y-0.5">
                       <div className="font-bold text-black">____________________________________________________</div>
-                      <div className="font-black text-gray-800 uppercase tracking-wide">Técnico</div>
+                      <div className="font-black text-black uppercase tracking-wide">Técnico</div>
                     </div>
                   </div>
                 </div>

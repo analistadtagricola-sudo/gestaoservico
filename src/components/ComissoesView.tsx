@@ -26,9 +26,14 @@ import {
   ArrowUp,
   ArrowDown,
   Printer,
-  ArrowLeft
+  ArrowLeft,
+  Trophy,
+  Target,
+  PieChart,
+  BarChart2
 } from "lucide-react";
 import { OrdemServico, Tecnico } from "../types";
+import { API } from "../lib/api";
 
 interface ComissaoManual {
   id: string;
@@ -77,10 +82,21 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
 
   // Local state for payment statuses of auto-generated commissions from O.S.
   // stored by OS ID in localStorage
-  const [paidOSIds, setPaidOSIds] = useState<Record<number, boolean>>({});
+  const [paidOSIds, setPaidOSIds] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem("gst_comissoes_os_pagas");
+    try {
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitialLoadComplete, setIsInitialLoadComplete] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+
+  const [comissoesTab, setComissoesTab] = useState<"lancamentos" | "detalhes" | "historico" | "metas" | "config">("lancamentos");
+  const [selectedYear, setSelectedYear] = useState<number>(2026);
 
   // Sorting State
   const [sortField, setSortField] = useState<string>("data");
@@ -99,16 +115,10 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
   } | null>(null);
 
   useEffect(() => {
-    // Load manual commission records from localStorage
+    // Load manual commission records from localStorage for immediate visual response
     const savedManuais = localStorage.getItem("gst_comissoes_manuais");
     if (savedManuais) {
       setComissoesManuais(JSON.parse(savedManuais));
-    }
-
-    // Load paid statuses for O.S. commissions
-    const savedPaidStatuses = localStorage.getItem("gst_comissoes_os_pagas");
-    if (savedPaidStatuses) {
-      setPaidOSIds(JSON.parse(savedPaidStatuses));
     }
 
     // Load company config
@@ -124,8 +134,71 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
     };
     loadCompanyConfig();
     window.addEventListener("company_config_updated", loadCompanyConfig);
+
+    // Load all actual commission records from Supabase to prevent loss across sessions
+    const syncWithSupabase = async () => {
+      try {
+        const dbComms = await API.comissoes.listar();
+        if (dbComms && dbComms.length > 0) {
+          const updatedPaidOSIds: Record<string, boolean> = {};
+          const updatedManualComms: ComissaoManual[] = [];
+
+          dbComms.forEach((comm: any) => {
+            if (comm.tipo_lancamento === "MANUAL") {
+              updatedManualComms.push({
+                id: String(comm.id),
+                tecnico_id: Number(comm.tecnico_id),
+                data: comm.data_comissao,
+                valor: Number(comm.valor_comissao),
+                descricao: comm.observacao || "",
+                status: comm.status
+              });
+            } else {
+              if (comm.os_id) {
+                const desc = String(comm.observacao || "");
+                if (desc.includes("(Auxiliar)")) {
+                  updatedPaidOSIds[`OS-${comm.os_id}-aux`] = comm.status === "PAGO";
+                } else {
+                  updatedPaidOSIds[`OS-${comm.os_id}-tech`] = comm.status === "PAGO";
+                }
+              }
+            }
+          });
+
+          if (updatedManualComms.length > 0) {
+            setComissoesManuais(updatedManualComms);
+            localStorage.setItem("gst_comissoes_manuais", JSON.stringify(updatedManualComms));
+          }
+
+          setPaidOSIds(prev => {
+            const merged = { ...prev, ...updatedPaidOSIds };
+            localStorage.setItem("gst_comissoes_os_pagas", JSON.stringify(merged));
+            return merged;
+          });
+        }
+      } catch (err) {
+        console.warn("Erro ao carregar comissoes do banco de dados:", err);
+      } finally {
+        setIsInitialLoadComplete(true);
+      }
+    };
+
+    syncWithSupabase();
+
     return () => window.removeEventListener("company_config_updated", loadCompanyConfig);
   }, []);
+
+  // Automatic synchronization of commissions to Supabase 'comissoes' table (strictly after initial load)
+  useEffect(() => {
+    if (isInitialLoadComplete && ordens && ordens.length > 0) {
+      const allComms = getAllCommissions();
+      if (allComms.length > 0) {
+        API.comissoes.sincronizar(allComms).catch(err => {
+          console.warn("Erro ao sincronizar comissoes com banco de dados:", err);
+        });
+      }
+    }
+  }, [isInitialLoadComplete, ordens, comissoesManuais, paidOSIds]);
 
   const saveManualCommissions = (updatedList: ComissaoManual[]) => {
     setComissoesManuais(updatedList);
@@ -162,6 +235,8 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
     if (savedConfig) {
       try {
         const parsed = JSON.parse(savedConfig);
+        if (parsed.modo_calculo) config.modo_calculo = parsed.modo_calculo;
+        if (parsed.status_os) config.status_os = parsed.status_os;
         if (parsed.regraPadrao) {
           config.regraPadrao = {
             ...parsed.regraPadrao,
@@ -193,9 +268,9 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
             { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
             { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES", baseCalculo: "fixo", valorTecnico: 500, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
             { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MANUTENÇÃO CORRETIVA", baseCalculo: "horas_e_km_customizado", valorTecnico: 20, valorHoraComissao: 200, valorKmComissao: 2.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MANUTENÇÃO PREVENTIVA", baseCalculo: "horas_e_km_customizado", valorTecnico: 20, valorHoraComissao: 200, valorKmComissao: 2.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "GARANTIA", baseCalculo: "horas_e_km_customizado", valorTecnico: 20, valorHoraComissao: 200, valorKmComissao: 2.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+            { tipo: "MANUTENÇÃO CORRETIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+            { tipo: "MANUTENÇÃO PREVENTIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+            { tipo: "GARANTIA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
           ];
         }
       } catch (e) {
@@ -238,8 +313,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
         });
       }
 
-      // If no rule matched, use the default standard rule (Regra Padrão)
-      const rule = matchedRule || {
+      const defaultRule = {
         tipo: "Padrão (Vendas/Faturado)",
         baseCalculo: config.regraPadrao.baseCalculo || "faturamento_total",
         valorTecnico: Number(config.regraPadrao.percentualTecnico ?? 20),
@@ -249,118 +323,131 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
         valorAuxiliar: Number(config.regraPadrao.valorAuxiliar ?? 0)
       };
 
-      // Decide base value
-      let baseValue = 0;
-      let baseDesc = "";
-      if (o.modo_debito_interno) {
-        if (rule.baseCalculo === "fixo") {
-          baseValue = 0;
-          baseDesc = "Fixo";
-        } else {
-          baseValue = Number(o.valor_referencia_servico) || 0;
-          
-          // Fallback calculation if stored value is 0 but we have valid hours/KM
-          if (baseValue === 0 && rule.baseCalculo === "horas_e_km_customizado") {
-            const customHourRate = Number(rule.valorHoraComissao ?? 50);
-            const customKmRate = Number(rule.valorKmComissao ?? 1.50);
+      // Helper function to calculate values for a rule
+      const calculateForRule = (ruleToUse: any) => {
+        let baseValue = 0;
+        let baseDesc = "";
+
+        if (o.modo_debito_interno) {
+          if (ruleToUse.baseCalculo === "fixo") {
+            baseValue = Number(ruleToUse.valorTecnico) || 0;
+            baseDesc = "Valor Fixo";
+          } else if (ruleToUse.baseCalculo === "horas_e_km_customizado") {
+            const customHourRate = Number(ruleToUse.valorHoraComissao ?? 50);
+            const customKmRate = Number(ruleToUse.valorKmComissao ?? 1.50);
             const hrs = parseFloat(o.horas_trabalhadas_total || "0") || 0;
             const kms = Number(o.km_rodado_total) || 0;
-            baseValue = (hrs * customHourRate) + (kms * customKmRate);
-          }
+            const hrsKmCalculated = (hrs * customHourRate) + (kms * customKmRate);
 
-          if (rule.baseCalculo === "horas_e_km_customizado") {
-            const customHourRate = Number(rule.valorHoraComissao ?? 50);
-            const customKmRate = Number(rule.valorKmComissao ?? 1.50);
-            baseDesc = `Horas e KM Reduzidos (R$ ${customHourRate.toFixed(2)}/h e R$ ${customKmRate.toFixed(2)}/km)`;
+            if (hrsKmCalculated > 0) {
+              baseValue = hrsKmCalculated;
+              baseDesc = `Horas e KM Reduzidos (R$ ${customHourRate.toFixed(2)}/h e R$ ${customKmRate.toFixed(2)}/km)`;
+            } else {
+              baseValue = Number(o.valor_referencia_servico) || totalBaseValue || totalOS;
+              baseDesc = "Ref. Débito Interno";
+            }
           } else {
+            baseValue = Number(o.valor_referencia_servico) || totalBaseValue || totalOS;
             baseDesc = "Ref. Débito Interno";
           }
+        } else {
+          // FATURAMENTO NORMAL PARA CLIENTE (modo_debito_interno === false)
+          if (ruleToUse.baseCalculo === "fixo") {
+            baseValue = Number(ruleToUse.valorTecnico) || 0;
+            baseDesc = "Valor Fixo";
+          } else if (ruleToUse.baseCalculo === "faturamento_total") {
+            baseValue = totalOS > 0 ? totalOS : (totalBaseValue > 0 ? totalBaseValue : (Number(o.valor_referencia_servico) || 0));
+            baseDesc = "Faturamento Total";
+          } else {
+            // Para O.S. Faturadas para Cliente (sem débito interno), a base utiliza Mão de Obra + Deslocamento
+            baseValue = totalBaseValue > 0 ? totalBaseValue : (totalOS > 0 ? totalOS : (Number(o.valor_referencia_servico) || 0));
+            baseDesc = "M.O. + Deslocamento";
+          }
         }
+
+        let techComm = 0;
+        let auxComm = 0;
+        let techDesc = "";
+        let auxDesc = "";
+
+        // Main tech commission
+        if (ruleToUse.baseCalculo === "fixo") {
+          const rawAmount = Number(ruleToUse.valorTecnico) || 0;
+          if (o.auxiliar_id && ruleToUse.regraAuxiliar === "racha_50_50") {
+            techComm = rawAmount / 2;
+            techDesc = ` (Racha 50% de R$ ${rawAmount.toFixed(2)} Fixo)`;
+          } else {
+            techComm = rawAmount;
+            techDesc = ` (Fixo R$ ${rawAmount.toFixed(2)})`;
+          }
+        } else {
+          const rate = Number(ruleToUse.valorTecnico) || 0;
+          const rawCommission = baseValue * (rate / 100);
+          if (o.auxiliar_id && ruleToUse.regraAuxiliar === "racha_50_50") {
+            techComm = rawCommission / 2;
+            techDesc = ` (Racha 50% de ${rate}% sobre ${baseDesc})`;
+          } else {
+            techComm = rawCommission;
+            techDesc = ` (${rate}% sobre ${baseDesc})`;
+          }
+        }
+
+        // Auxiliary commission if exists
+        if (o.auxiliar_id) {
+          if (ruleToUse.regraAuxiliar === "racha_50_50") {
+            if (ruleToUse.baseCalculo === "fixo") {
+              const rawAmount = Number(ruleToUse.valorTecnico) || 0;
+              auxComm = rawAmount / 2;
+              auxDesc = ` (Racha 50% de R$ ${rawAmount.toFixed(2)} Fixo)`;
+            } else {
+              const rate = Number(ruleToUse.valorTecnico) || 0;
+              auxComm = (baseValue * (rate / 100)) / 2;
+              auxDesc = ` (Racha 50% de ${rate}% sobre ${baseDesc})`;
+            }
+          } else if (ruleToUse.regraAuxiliar === "valor_customizado") {
+            if (ruleToUse.baseCalculo === "fixo") {
+              const rawAmount = Number(ruleToUse.valorAuxiliar) || 0;
+              auxComm = rawAmount;
+              auxDesc = ` (Fixo R$ ${rawAmount.toFixed(2)})`;
+            } else {
+              const rateAux = Number(ruleToUse.valorAuxiliar) || 0;
+              auxComm = baseValue * (rateAux / 100);
+              auxDesc = ` (${rateAux}% sobre ${baseDesc})`;
+            }
+          } else { // "sem_comissao"
+            auxComm = 0;
+            auxDesc = " (Sem comissão configurada)";
+          }
+        }
+
+        return { rule: ruleToUse, baseValue, baseDesc, techComm, auxComm, techDesc, auxDesc };
+      };
+
+      // Determine calculation result based on modo_calculo
+      let calcResult;
+      if (config.modo_calculo === "APENAS_PADRAO") {
+        calcResult = calculateForRule(defaultRule);
+      } else if (config.modo_calculo === "MAIOR_COMISSAO" && matchedRule) {
+        const specResult = calculateForRule(matchedRule);
+        const defResult = calculateForRule(defaultRule);
+        calcResult = defResult.techComm > specResult.techComm ? defResult : specResult;
       } else {
-        // VENDA / FATURADO NORMAL PARA CLIENTE (modo_debito_interno === false)
-        // A base de comissão de vendas é SEMPRE Mão de Obra + Deslocamento (NUNCA inclui Serviços de Terceiros nem Peças)
-        if (rule.baseCalculo === "fixo") {
-          baseValue = 0;
-          baseDesc = "Fixo";
-        } else if (rule.baseCalculo === "horas_e_km_customizado" && (normTipoAtendimento.includes("garantia") || normTipoAtendimento.includes("entrega") || normTipoAtendimento.includes("montagem") || normTipoAtendimento.includes("treinamento"))) {
-          const customHourRate = Number(rule.valorHoraComissao ?? 50);
-          const customKmRate = Number(rule.valorKmComissao ?? 1.50);
-          const hrs = parseFloat(o.horas_trabalhadas_total || "0") || 0;
-          const kms = Number(o.km_rodado_total) || 0;
-          baseValue = (hrs * customHourRate) + (kms * customKmRate);
-          baseDesc = `Horas e KM Reduzidos (R$ ${customHourRate.toFixed(2)}/h e R$ ${customKmRate.toFixed(2)}/km)`;
-        } else { // Vendas (Faturado): Mão de Obra + Deslocamento
-          baseValue = totalBaseValue; // laborValue + displacementValue (exclui serviços de terceiros e peças)
-          baseDesc = "M.O. + Deslocamento";
-        }
+        // REGRA_MAIS_ESPECIFICA (or fallback)
+        calcResult = calculateForRule(matchedRule || defaultRule);
       }
 
-      // Calculate commissions
-      let techCommission = 0;
-      let auxCommission = 0;
-      let techDescSuffix = "";
-      let auxDescSuffix = "";
+      let { rule, baseValue, baseDesc, techComm: techCommission, auxComm: auxCommission, techDesc: techDescSuffix, auxDesc: auxDescSuffix } = calcResult;
 
       if (o.comissao_custom_opcao === "personalizado") {
         techCommission = o.comissao_custom_valor_tecnico !== undefined ? o.comissao_custom_valor_tecnico : 0;
         auxCommission = o.comissao_custom_valor_auxiliar !== undefined ? o.comissao_custom_valor_auxiliar : 0;
         techDescSuffix = " (Personalizado)";
         auxDescSuffix = " (Personalizado)";
-      } else {
-        // Main tech commission
-        if (rule.baseCalculo === "fixo") {
-          const rawAmount = Number(rule.valorTecnico) || 0;
-          if (o.auxiliar_id && rule.regraAuxiliar === "racha_50_50") {
-            techCommission = rawAmount / 2;
-            techDescSuffix = ` (Racha 50% de R$ ${rawAmount.toFixed(2)} Fixo)`;
-          } else {
-            techCommission = rawAmount;
-            techDescSuffix = ` (Fixo R$ ${rawAmount.toFixed(2)})`;
-          }
-        } else {
-          const rate = Number(rule.valorTecnico) || 0;
-          const rawCommission = baseValue * (rate / 100);
-          if (o.auxiliar_id && rule.regraAuxiliar === "racha_50_50") {
-            techCommission = rawCommission / 2;
-            techDescSuffix = ` (Racha 50% de ${rate}% sobre ${baseDesc})`;
-          } else {
-            techCommission = rawCommission;
-            techDescSuffix = ` (${rate}% sobre ${baseDesc})`;
-          }
-        }
-
-        // Auxiliary commission if exists
-        if (o.auxiliar_id) {
-          if (rule.regraAuxiliar === "racha_50_50") {
-            if (rule.baseCalculo === "fixo") {
-              const rawAmount = Number(rule.valorTecnico) || 0;
-              auxCommission = rawAmount / 2;
-              auxDescSuffix = ` (Racha 50% de R$ ${rawAmount.toFixed(2)} Fixo)`;
-            } else {
-              const rate = Number(rule.valorTecnico) || 0;
-              auxCommission = (baseValue * (rate / 100)) / 2;
-              auxDescSuffix = ` (Racha 50% de ${rate}% sobre ${baseDesc})`;
-            }
-          } else if (rule.regraAuxiliar === "valor_customizado") {
-            if (rule.baseCalculo === "fixo") {
-              const rawAmount = Number(rule.valorAuxiliar) || 0;
-              auxCommission = rawAmount;
-              auxDescSuffix = ` (Fixo R$ ${rawAmount.toFixed(2)})`;
-            } else {
-              const rateAux = Number(rule.valorAuxiliar) || 0;
-              auxCommission = baseValue * (rateAux / 100);
-              auxDescSuffix = ` (${rateAux}% sobre ${baseDesc})`;
-            }
-          } else { // "sem_comissao"
-            auxCommission = 0;
-            auxDescSuffix = " (Sem comissão configurada)";
-          }
-        }
       }
 
       // Add Main Tech commission
       if (o.tecnico_id && tech) {
-        const isPaid = paidOSIds[`${o.id}-tech`] || false;
+        const isPaid = paidOSIds[`OS-${o.id}-tech`] || false;
         commissions.push({
           id: `OS-${o.id}-tech`,
           os_id: o.id,
@@ -386,7 +473,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
       if (o.auxiliar_id) {
         const aux = tecnicos.find(t => t.id === o.auxiliar_id);
         if (aux) {
-          const isPaid = paidOSIds[`${o.id}-aux`] || false;
+          const isPaid = paidOSIds[`OS-${o.id}-aux`] || false;
           commissions.push({
             id: `OS-${o.id}-aux`,
             os_id: o.id,
@@ -448,7 +535,15 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
         descricao: mc.descricao,
         status: mc.status,
         isManual: true,
-        os_id: undefined
+        os_id: undefined,
+        payment_key: mc.id,
+        cliente_nome: "Lançamento Manual",
+        equipamento_modelo: "—",
+        equipamento_serie: "—",
+        tipo_os: "Lançamento Manual",
+        valor_os: 0,
+        modo_debito_interno: false,
+        valor_referencia_servico: 0
       };
     });
 
@@ -516,10 +611,22 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
 
   // Handle Commission Payment Status toggle for O.S.
   const handleToggleOSPayment = (paymentKey: string) => {
-    const updated = { ...paidOSIds, [paymentKey]: !paidOSIds[paymentKey] };
+    const isNowPaid = !paidOSIds[paymentKey];
+    const updated = { ...paidOSIds, [paymentKey]: isNowPaid };
     setPaidOSIds(updated);
     localStorage.setItem("gst_comissoes_os_pagas", JSON.stringify(updated));
-    showToast(updated[paymentKey] ? "Comissão marcada como PAGA!" : "Comissão estornada para PENDENTE.");
+
+    // Find the technician ID from the payment key to target precisely in Supabase
+    const all = getAllCommissions();
+    const commItem = all.find(c => c.payment_key === paymentKey);
+    const tecnicoId = commItem?.tecnico_id;
+
+    // Sync status change to Supabase
+    API.comissoes.atualizarStatus(paymentKey, isNowPaid ? "PAGO" : "PENDENTE", tecnicoId).catch(e => {
+      console.warn("Erro ao atualizar status de comissao no Supabase:", e);
+    });
+
+    showToast(isNowPaid ? "Comissão marcada como PAGA!" : "Comissão estornada para PENDENTE.");
   };
 
   // Manual commissions CRUD actions
@@ -547,12 +654,14 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
     setEditingComissao(null);
   };
 
-  const handleSaveCommission = (e: React.FormEvent) => {
+  const handleSaveCommission = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTecnicoId || formValor <= 0 || !formDescricao.trim()) {
       showToast("Preencha todos os campos corretamente.", "error");
       return;
     }
+
+    const techObj = tecnicos.find(t => String(t.id) === String(formTecnicoId));
 
     const payload: ComissaoManual = {
       id: editingComissao?.id || "M" + String(Date.now()),
@@ -573,6 +682,22 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
     }
 
     saveManualCommissions(updatedList);
+
+    // Save to Supabase 'comissoes' table
+    try {
+      await API.comissoes.salvar({
+        isManual: true,
+        tecnico_id: payload.tecnico_id,
+        tecnico_nome: techObj?.apelido || techObj?.nome || "Técnico",
+        data: payload.data,
+        valor: payload.valor,
+        descricao: payload.descricao,
+        status: payload.status
+      });
+    } catch (err) {
+      console.warn("Erro ao salvar comissao no Supabase:", err);
+    }
+
     closeForm();
   };
 
@@ -867,33 +992,144 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
     );
   }
 
+  // Dynamic calculations for dashboard - 100% REAL AND INTERACTIVE!
+  const getComissaoDoMes = () => {
+    const all = getAllCommissions();
+    const currentMonthStr = "2026-07"; // default current month according to session time (July 2026)
+    // Calculate the real sum for the current month
+    const sum = all
+      .filter(c => c.data && c.data.startsWith(currentMonthStr))
+      .reduce((sum, c) => sum + c.valor, 0);
+    return sum;
+  };
+
+  const comissaoDoMes = getComissaoDoMes();
+
+  const getTecnicoDestaque = () => {
+    const techSums: Record<string, number> = {};
+    filteredComms.forEach(c => {
+      techSums[c.tecnico_nome] = (techSums[c.tecnico_nome] || 0) + c.valor;
+    });
+    
+    let topTech = "";
+    let topVal = 0;
+    
+    Object.entries(techSums).forEach(([name, val]) => {
+      if (val > topVal) {
+        topVal = val;
+        topTech = name;
+      }
+    });
+
+    if (!topTech) {
+      return { nome: "Nenhum no Período", valor: 0 };
+    }
+    return { nome: topTech, valor: topVal };
+  };
+
+  const tecnicoDestaque = getTecnicoDestaque();
+
+  // Monthly aggregated data for selected year
+  const monthlyData = [
+    { month: "Jan", key: "01", valor: 0 },
+    { month: "Fev", key: "02", valor: 0 },
+    { month: "Mar", key: "03", valor: 0 },
+    { month: "Abr", key: "04", valor: 0 },
+    { month: "Mai", key: "05", valor: 0 },
+    { month: "Jun", key: "06", valor: 0 },
+    { month: "Jul", key: "07", valor: 0 },
+    { month: "Ago", key: "08", valor: 0 },
+    { month: "Set", key: "09", valor: 0 },
+    { month: "Out", key: "10", valor: 0 },
+    { month: "Nov", key: "11", valor: 0 },
+    { month: "Dez", key: "12", valor: 0 },
+  ];
+
+  // We filter the monthly trend chart using search and tech criteria to make it interactive, 
+  // but we omit the specific date filter so that they can see the whole 12-month historical trend!
+  const commsForTrendChart = getAllCommissions().filter(c => {
+    const q = searchTerm.toLowerCase();
+    const matchesSearch = c.tecnico_nome.toLowerCase().includes(q) || c.descricao.toLowerCase().includes(q);
+    const matchesTech = selectedTechFilter === "" || String(c.tecnico_id) === selectedTechFilter;
+    const matchesStatus = selectedStatusFilter === "TODAS" || c.status === selectedStatusFilter;
+    return matchesSearch && matchesTech && matchesStatus;
+  });
+
+  monthlyData.forEach(item => {
+    const sum = commsForTrendChart
+      .filter(c => c.data && c.data.startsWith(`${selectedYear}-${item.key}`))
+      .reduce((s, c) => s + c.valor, 0);
+    item.valor = sum;
+  });
+
+  const chartMonthlyData = monthlyData;
+
+  // Technician ranking data - 100% real based on active filters (excluding tech filter itself so comparisons stay useful)
+  const commsForRanking = getAllCommissions().filter(c => {
+    const q = searchTerm.toLowerCase();
+    const matchesSearch = c.tecnico_nome.toLowerCase().includes(q) || c.descricao.toLowerCase().includes(q);
+    const matchesStatus = selectedStatusFilter === "TODAS" || c.status === selectedStatusFilter;
+    let matchesDate = true;
+    if (startDate) matchesDate = matchesDate && c.data >= startDate;
+    if (endDate) matchesDate = matchesDate && c.data <= endDate;
+    return matchesSearch && matchesStatus && matchesDate;
+  });
+
+  const techMap: Record<number, { name: string; valor: number }> = {};
+  commsForRanking.forEach(c => {
+    if (!techMap[c.tecnico_id]) {
+      techMap[c.tecnico_id] = { name: c.tecnico_nome, valor: 0 };
+    }
+    techMap[c.tecnico_id].valor += c.valor;
+  });
+
+  const finalRanking = Object.entries(techMap)
+    .map(([id, item]) => ({ id: Number(id), name: item.name, valor: item.valor }))
+    .sort((a, b) => b.valor - a.valor)
+    .slice(0, 5);
+
+  // Donut chart status calculations - 100% real based on active filters!
+  const donutPendente = totalPendente;
+  const donutPago = totalPago;
+  const donutTotal = donutPendente + donutPago;
+
+  const pctPendente = donutTotal > 0 ? (donutPendente / donutTotal) * 100 : 0;
+  const pctPago = donutTotal > 0 ? (donutPago / donutTotal) * 100 : 0;
+
+  // SVG Circle stroke dash values
+  const circ = 251.3;
+  const strokeDashPendente = (pctPendente / 100) * circ;
+  const strokeDashPago = (pctPago / 100) * circ;
+
   return (
     <div className="space-y-6 text-xs">
       {/* Toast Alert */}
       <AnimatePresence>
         {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: 50, x: "-50%" }}
-            animate={{ opacity: 1, y: 0, x: "-50%" }}
-            exit={{ opacity: 0, y: 20, x: "-50%" }}
-            className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-xl text-white font-semibold text-sm flex items-center gap-2 ${
-              toastMessage.type === "success" ? "bg-emerald-600" : toastMessage.type === "error" ? "bg-rose-600" : "bg-blue-600"
-            }`}
-          >
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{toastMessage.text}</span>
-          </motion.div>
+          <div className="fixed inset-x-0 bottom-8 md:left-64 z-[100] flex justify-center pointer-events-none px-4">
+            <motion.div
+              initial={{ opacity: 0, y: 30, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className={`pointer-events-auto px-6 py-3 rounded-lg shadow-2xl text-white font-semibold text-sm flex items-center gap-2.5 ${
+                toastMessage.type === "success" ? "bg-emerald-600" : toastMessage.type === "error" ? "bg-rose-600" : "bg-blue-600"
+              }`}
+            >
+              <CheckCircle2 className="w-5 h-5 shrink-0" />
+              <span>{toastMessage.text}</span>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      {/* Header and top rule slider */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Header and top controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 pb-4">
         <div>
           <h1 className="font-display text-4xl font-extrabold tracking-tight uppercase text-brand-ink">
-            Comissões e Tarifas
+            Comissões e Resultados
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Gestão de pagamento de comissões técnicas por horas trabalhadas e lançamentos manuais de bonificações.
+            Painel consolidado de resultados, acompanhamento técnico e lançamentos de comissões por serviços.
           </p>
         </div>
 
@@ -904,7 +1140,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
               setPrintMode(true);
             }}
             className="btn bg-blue-600 hover:bg-blue-700 text-white border-none shadow-sm flex items-center gap-1.5 py-2 px-4 rounded-xl font-bold"
-            title="Visualizar e imprimir relatório de fechamento de comissões"
+            title="Visualizar e imprimir relatório de fechamento"
           >
             <Printer className="w-4 h-4" />
             Imprimir Fechamento
@@ -920,281 +1156,779 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
         </div>
       </div>
 
-      {/* Metric Cards Block */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden">
+      {/* 5-Column Dashboard KPI Metrics Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Total Pendente */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-amber-500" />
           <div className="flex justify-between items-start">
             <div>
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Total Pendente</span>
-              <h2 className="text-2xl font-extrabold font-display text-brand-ink mt-2">
+              <h2 className="text-xl font-extrabold font-display text-brand-ink mt-2">
                 {totalPendente.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
               </h2>
             </div>
-            <div className="p-2.5 bg-amber-50 text-amber-600 rounded-lg">
-              <Wallet className="w-5 h-5" />
+            <div className="p-2 bg-amber-50 text-amber-600 rounded-lg">
+              <Wallet className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase">Comissões aguardando acerto</p>
+          <p className="text-[10px] text-gray-400 font-bold mt-3 uppercase">Aguardando acerto de contas</p>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden">
+        {/* Total Pago */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
           <div className="flex justify-between items-start">
             <div>
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Total Pago</span>
-              <h2 className="text-2xl font-extrabold font-display text-brand-ink mt-2">
+              <h2 className="text-xl font-extrabold font-display text-brand-ink mt-2">
                 {totalPago.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
               </h2>
             </div>
-            <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-lg">
-              <CheckCircle2 className="w-5 h-5" />
+            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+              <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase">Histórico de acertos quitados</p>
+          <p className="text-[10px] text-gray-400 font-bold mt-3 uppercase">Comissões quitadas e liquidadas</p>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[3px] bg-gray-900" />
+        {/* Total Acumulado */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[3px] bg-sky-600" />
           <div className="flex justify-between items-start">
             <div>
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Total Acumulado</span>
-              <h2 className="text-2xl font-extrabold font-display text-brand-ink mt-2">
+              <h2 className="text-xl font-extrabold font-display text-brand-ink mt-2">
                 {totalGeral.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
               </h2>
             </div>
-            <div className="p-2.5 bg-gray-50 text-gray-700 rounded-lg">
-              <DollarSign className="w-5 h-5" />
+            <div className="p-2 bg-sky-50 text-sky-600 rounded-lg">
+              <DollarSign className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase font-mono">Faturamento operacional de comissão</p>
+          <p className="text-[10px] text-gray-400 font-bold mt-3 uppercase">Volume operacional histórico</p>
+        </div>
+
+        {/* Comissão do Mês */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[3px] bg-indigo-500" />
+          <div className="flex justify-between items-start">
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Comissão do Mês</span>
+              <h2 className="text-xl font-extrabold font-display text-brand-ink mt-2">
+                {comissaoDoMes.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              </h2>
+            </div>
+            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+              <Calendar className="w-4 h-4" />
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-400 font-bold mt-3 uppercase">Total previsto para pagamento</p>
+        </div>
+
+        {/* Técnico Destaque */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[3px] bg-yellow-500" />
+          <div className="flex justify-between items-start">
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Técnico Destaque</span>
+              <h2 className="text-lg font-black font-display text-brand-ink mt-2 truncate w-full">
+                {tecnicoDestaque.nome}
+              </h2>
+              <span className="text-[11px] font-bold text-brand-red font-mono mt-0.5 block">
+                {tecnicoDestaque.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              </span>
+            </div>
+            <div className="p-2 bg-yellow-50 text-yellow-600 rounded-lg shrink-0">
+              <Trophy className="w-4 h-4" />
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase">Líder de produção no período</p>
         </div>
       </div>
 
-      {/* Grid Filters and Table */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        {/* Toolbar Search / Filter */}
-        <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <input
-              type="text"
-              placeholder="Pesquisar por técnico ou descrição..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg w-full text-xs"
-            />
+      {/* Dash de Resultados: Graficos do modulo de comissao */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Comissões por Mês Chart */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm lg:col-span-5 flex flex-col justify-between min-h-[300px]">
+          <div className="flex justify-between items-center border-b border-gray-100 pb-3">
+            <div>
+              <h3 className="font-display font-extrabold text-sm uppercase text-brand-ink flex items-center gap-1.5">
+                <BarChart2 className="w-4 h-4 text-blue-600" />
+                Comissões por Mês
+              </h3>
+              <p className="text-[10px] text-gray-400 font-bold uppercase">Análise de evolução mensal</p>
+            </div>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="border border-gray-200 rounded px-2 py-0.5 text-[10px] bg-white font-bold text-gray-700"
+            >
+              <option value={2026}>2026</option>
+              <option value={2025}>2025</option>
+            </select>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 justify-end">
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-400 font-bold uppercase">De:</span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white text-gray-600 font-semibold focus:outline-none focus:border-brand-red"
-              />
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-400 font-bold uppercase">Até:</span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white text-gray-600 font-semibold focus:outline-none focus:border-brand-red"
-              />
-            </div>
+          {/* SVG Vertical Columns Chart */}
+          <div className="pt-6 pb-2 flex-1 flex items-end justify-between gap-2.5 h-44">
+            {chartMonthlyData.map((d) => {
+              const maxMonthVal = Math.max(...chartMonthlyData.map((item) => item.valor), 1);
+              const heightPct = Math.max(5, (d.valor / maxMonthVal) * 100);
+              return (
+                <div key={d.month} className="flex-1 flex flex-col items-center group relative h-full justify-end">
+                  {/* Tooltip on Hover */}
+                  <div className="absolute bottom-full mb-1 bg-gray-900 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10 shadow-lg">
+                    {d.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                  </div>
+                  
+                  {/* Compact value indicator */}
+                  <span className="text-[8px] font-bold text-gray-500 mb-1 leading-none">
+                    {d.valor > 0 ? `${(d.valor / 1000).toFixed(0)}k` : "—"}
+                  </span>
 
-            <select
-              value={selectedTechFilter}
-              onChange={(e) => setSelectedTechFilter(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs bg-white text-gray-600 font-semibold"
-            >
-              <option value="">Filtrar Técnico...</option>
-              {tecnicos.map(t => (
-                <option key={t.id} value={t.id}>{t.apelido || t.nome}</option>
-              ))}
-            </select>
+                  {/* Column Bar */}
+                  <motion.div
+                    initial={{ height: 0 }}
+                    animate={{ height: `${heightPct}%` }}
+                    transition={{ duration: 0.6, ease: "easeOut" }}
+                    className={`w-full rounded-t-sm transition-all duration-200 cursor-pointer ${
+                      d.month === "Jul" ? "bg-brand-red group-hover:bg-brand-red-dark" : "bg-blue-600 group-hover:bg-blue-700"
+                    }`}
+                  />
 
-            <select
-              value={selectedStatusFilter}
-              onChange={(e) => setSelectedStatusFilter(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs bg-white text-gray-600 font-semibold"
-            >
-              <option value="TODAS">Ver Todos Status</option>
-              <option value="PENDENTE">Apenas Pendentes</option>
-              <option value="PAGO">Apenas Pagos</option>
-            </select>
-
-            <button
-              onClick={async () => {
-                setIsLoading(true);
-                await onRefresh();
-                setIsLoading(false);
-                showToast("Dados atualizados!", "info");
-              }}
-              className="p-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 flex items-center gap-1"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-            </button>
+                  {/* Month Label */}
+                  <span className="text-[9px] font-bold text-gray-400 uppercase mt-2.5">{d.month}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Table representation */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
-                <th className="p-4 w-28 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("data")}>
-                  <div className="flex items-center gap-1">
-                    Data
-                    {sortField === "data" && (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
-                    )}
-                  </div>
-                </th>
-                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("tecnico_nome")}>
-                  <div className="flex items-center gap-1">
-                    Técnico Beneficiário
-                    {sortField === "tecnico_nome" && (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
-                    )}
-                  </div>
-                </th>
-                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors">Cliente / Equipamento</th>
-                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors">Tipo / Valor O.S.</th>
-                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("descricao")}>
-                  <div className="flex items-center gap-1">
-                    Descrição
-                    {sortField === "descricao" && (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
-                    )}
-                  </div>
-                </th>
-                <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("isManual")}>
-                  <div className="flex items-center gap-1">
-                    Tipo
-                    {sortField === "isManual" && (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
-                    )}
-                  </div>
-                </th>
-                <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("status")}>
-                  <div className="flex items-center justify-center gap-1">
-                    Status
-                    {sortField === "status" && (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
-                    )}
-                  </div>
-                </th>
-                <th className="p-4 text-right cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("valor")}>
-                  <div className="flex items-center justify-end gap-1">
-                    Valor Líquido
-                    {sortField === "valor" && (
-                      sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
-                    )}
-                  </div>
-                </th>
-                <th className="p-4 text-right w-36">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 text-xs">
-              {filteredComms.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="p-8 text-center text-gray-400">
-                    Nenhum registro de comissão correspondente aos filtros.
-                  </td>
-                </tr>
-              ) : (
-                filteredComms.map((comm) => (
-                  <tr 
-                    key={comm.id} 
-                    className="hover:bg-gray-50/50 transition-colors"
-                  >
-                    <td className="p-4 text-gray-600 font-semibold">
-                      {comm.data ? new Date(comm.data + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
-                    </td>
-                    <td className="p-4 font-bold text-brand-ink">
-                      {comm.tecnico_nome}
-                    </td>
-                    <td className="p-4 text-gray-600">
-                      <div className="font-semibold">{comm.cliente_nome || "—"}</div>
-                      <div className="text-[10px] text-gray-400">{comm.equipamento_modelo || "—"} | SÉRIE: {comm.equipamento_serie || "—"}</div>
-                    </td>
-                    <td className="p-4 text-gray-600">
-                      <div className="font-semibold">{comm.tipo_os || "—"}</div>
-                      <div className="text-[10px] text-gray-400">
-                        {comm.modo_debito_interno ? (
-                          <span className="text-amber-600 font-extrabold uppercase bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
-                            Déb. Interno (Ref: {comm.valor_referencia_servico?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })})
-                          </span>
-                        ) : (
-                          `O.S.: ${comm.valor_os?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) || "R$ 0,00"}`
-                        )}
+        {/* Ranking de Técnicos (Mês) */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm lg:col-span-4 flex flex-col justify-between">
+          <div>
+            <div className="flex justify-between items-center border-b border-gray-100 pb-3">
+              <div>
+                <h3 className="font-display font-extrabold text-sm uppercase text-brand-ink flex items-center gap-1.5">
+                  <Trophy className="w-4 h-4 text-emerald-600" />
+                  Ranking de Técnicos
+                </h3>
+                <p className="text-[10px] text-gray-400 font-bold uppercase">Distribuição de comissões acumuladas</p>
+              </div>
+            </div>
+
+            <div className="space-y-3.5 pt-4">
+              {finalRanking.map((r, idx) => {
+                const maxRankVal = Math.max(...finalRanking.map((item) => item.valor), 1);
+                const pct = (r.valor / maxRankVal) * 100;
+                return (
+                  <div key={r.id || idx} className="space-y-1">
+                    <div className="flex justify-between items-center text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-extrabold text-white ${
+                          idx === 0 ? "bg-yellow-500" : idx === 1 ? "bg-gray-400" : idx === 2 ? "bg-amber-600" : "bg-blue-600"
+                        }`}>
+                          {idx + 1}
+                        </span>
+                        <span className="font-bold text-gray-700">{r.name}</span>
                       </div>
-                    </td>
-                    <td className="p-4 text-gray-600 font-semibold max-w-xs truncate">
-                      {comm.descricao}
-                    </td>
-                    <td className="p-4">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase border ${
-                        comm.isManual 
-                          ? "bg-purple-50 text-purple-700 border-purple-100" 
-                          : "bg-blue-50 text-blue-700 border-blue-100"
-                      }`}>
-                        {comm.isManual ? "MANUAL" : "AUTO"}
+                      <span className="font-mono font-bold text-gray-900">
+                        {r.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                       </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold border ${
-                        comm.status === "PAGO" 
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-100" 
-                          : "bg-amber-50 text-amber-800 border-amber-100"
-                      }`}>
-                        {comm.status}
-                      </span>
-                    </td>
-                    <td className="p-4 text-right font-mono font-bold text-brand-ink">
-                      {comm.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                    </td>
-                    <td className="p-4 text-right space-x-1 flex items-center justify-end">
-                      {comm.isManual ? (
-                        <>
-                          <button
-                            onClick={() => openForm(comm as unknown as ComissaoManual)}
-                            className="p-1 text-sky-600 hover:bg-sky-50 rounded"
-                            title="Editar"
-                          >
-                            <Edit className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteCommission(comm.id)}
-                            className="p-1 text-rose-600 hover:bg-rose-50 rounded"
-                            title="Excluir"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          onClick={() => comm.payment_key && handleToggleOSPayment(comm.payment_key)}
-                          className={`px-2.5 py-1 text-[10px] font-extrabold uppercase rounded transition-colors ${
-                            comm.status === "PAGO"
-                              ? "bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-700 border border-gray-200"
-                              : "bg-emerald-600 text-white hover:bg-emerald-700 font-bold"
-                          }`}
-                        >
-                          {comm.status === "PAGO" ? "Reverter" : "Pagar"}
-                        </button>
+                    </div>
+                    {/* Progress Bar */}
+                    <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct}%` }}
+                        transition={{ duration: 0.5 }}
+                        className="bg-emerald-500 h-full rounded-full"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Status das Comissões Pie/Donut Chart */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm lg:col-span-3 flex flex-col justify-between">
+          <div className="border-b border-gray-100 pb-3">
+            <h3 className="font-display font-extrabold text-sm uppercase text-brand-ink flex items-center gap-1.5">
+              <PieChart className="w-4 h-4 text-orange-500" />
+              Status das Comissões
+            </h3>
+            <p className="text-[10px] text-gray-400 font-bold uppercase">Percentual de quitação</p>
+          </div>
+
+          <div className="flex flex-col items-center justify-center pt-4 pb-2">
+            {/* SVG Donut */}
+            <div className="relative w-28 h-28 flex items-center justify-center">
+              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="40"
+                  fill="transparent"
+                  stroke="#e2e8f0"
+                  strokeWidth="10"
+                />
+                {/* Pagas Arc (Green) */}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="40"
+                  fill="transparent"
+                  stroke="#10b981"
+                  strokeWidth="10"
+                  strokeDasharray={`${strokeDashPago} ${circ - strokeDashPago}`}
+                  strokeLinecap="round"
+                />
+                {/* Pendentes Arc (Orange) - offset to sit next to green */}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="40"
+                  fill="transparent"
+                  stroke="#f59e0b"
+                  strokeWidth="10"
+                  strokeDasharray={`${strokeDashPendente} ${circ - strokeDashPendente}`}
+                  strokeDashoffset={-strokeDashPago}
+                  strokeLinecap="round"
+                />
+              </svg>
+              {/* Center text */}
+              <div className="absolute text-center">
+                <span className="text-[8px] font-bold text-gray-400 uppercase tracking-widest block leading-none">Total</span>
+                <span className="text-[10px] font-black font-mono text-brand-ink mt-0.5 block leading-none">
+                  {donutTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                </span>
+              </div>
+            </div>
+
+            {/* Legend underneath */}
+            <div className="mt-4 w-full space-y-2">
+              <div className="flex justify-between items-center text-[10px]">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full shrink-0"></span>
+                  <span className="text-gray-500 font-bold">Pagas</span>
+                </div>
+                <div className="text-right">
+                  <span className="font-bold text-gray-800">{pctPago.toFixed(0)}%</span>
+                  <span className="text-gray-400 font-medium ml-1">({donutPago.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })})</span>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center text-[10px]">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 bg-amber-500 rounded-full shrink-0"></span>
+                  <span className="text-gray-500 font-bold">Pendentes</span>
+                </div>
+                <div className="text-right">
+                  <span className="font-bold text-gray-800">{pctPendente.toFixed(0)}%</span>
+                  <span className="text-gray-400 font-medium ml-1">({donutPendente.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Styled Horizontal Tabs */}
+      <div className="flex bg-gray-100 p-1 rounded-xl border border-gray-200">
+        <button
+          onClick={() => setComissoesTab("lancamentos")}
+          className={`flex-1 text-center py-2.5 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all ${
+            comissoesTab === "lancamentos" ? "bg-white text-brand-ink shadow-sm font-extrabold" : "text-gray-500 hover:text-brand-ink"
+          }`}
+        >
+          Lançamentos
+        </button>
+        <button
+          onClick={() => setComissoesTab("detalhes")}
+          className={`flex-1 text-center py-2.5 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all ${
+            comissoesTab === "detalhes" ? "bg-white text-brand-ink shadow-sm font-extrabold" : "text-gray-500 hover:text-brand-ink"
+          }`}
+        >
+          Detalhes da Comissão
+        </button>
+        <button
+          onClick={() => setComissoesTab("historico")}
+          className={`flex-1 text-center py-2.5 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all ${
+            comissoesTab === "historico" ? "bg-white text-brand-ink shadow-sm font-extrabold" : "text-gray-500 hover:text-brand-ink"
+          }`}
+        >
+          Histórico de Pagamentos
+        </button>
+        <button
+          onClick={() => setComissoesTab("metas")}
+          className={`flex-1 text-center py-2.5 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all ${
+            comissoesTab === "metas" ? "bg-white text-brand-ink shadow-sm font-extrabold" : "text-gray-500 hover:text-brand-ink"
+          }`}
+        >
+          Metas
+        </button>
+        <button
+          onClick={() => setComissoesTab("config")}
+          className={`flex-1 text-center py-2.5 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all ${
+            comissoesTab === "config" ? "bg-white text-brand-ink shadow-sm font-extrabold" : "text-gray-500 hover:text-brand-ink"
+          }`}
+        >
+          Configurações
+        </button>
+      </div>
+
+      {/* Grid Filters and Active Tab Content */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        {/* Render Toolbar if tab is lancamentos, detalhes, or historico */}
+        {(comissoesTab === "lancamentos" || comissoesTab === "historico" || comissoesTab === "detalhes") && (
+          <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
+                placeholder="Pesquisar por técnico ou descrição..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg w-full text-xs"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400 font-bold uppercase">De:</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white text-gray-600 font-semibold focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400 font-bold uppercase">Até:</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white text-gray-600 font-semibold focus:outline-none"
+                />
+              </div>
+
+              <select
+                value={selectedTechFilter}
+                onChange={(e) => setSelectedTechFilter(e.target.value)}
+                className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs bg-white text-gray-600 font-semibold"
+              >
+                <option value="">Filtrar Técnico...</option>
+                {tecnicos.map(t => (
+                  <option key={t.id} value={t.id}>{t.apelido || t.nome}</option>
+                ))}
+              </select>
+
+              {comissoesTab !== "historico" && (
+                <select
+                  value={selectedStatusFilter}
+                  onChange={(e) => setSelectedStatusFilter(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs bg-white text-gray-600 font-semibold"
+                >
+                  <option value="TODAS">Ver Todos Status</option>
+                  <option value="PENDENTE">Apenas Pendentes</option>
+                  <option value="PAGO">Apenas Pagos</option>
+                </select>
+              )}
+
+              <button
+                onClick={async () => {
+                  setIsLoading(true);
+                  await onRefresh();
+                  setIsLoading(false);
+                  showToast("Dados atualizados!", "info");
+                }}
+                className="p-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 flex items-center gap-1"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 1: LANÇAMENTOS */}
+        {comissoesTab === "lancamentos" && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                  <th className="p-4 w-28 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("data")}>
+                    <div className="flex items-center gap-1">
+                      Data
+                      {sortField === "data" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
                       )}
+                    </div>
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("tecnico_nome")}>
+                    <div className="flex items-center gap-1">
+                      Técnico Beneficiário
+                      {sortField === "tecnico_nome" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors">Cliente / Equipamento</th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors">Tipo / Valor O.S.</th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("descricao")}>
+                    <div className="flex items-center gap-1">
+                      Descrição
+                      {sortField === "descricao" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="p-4 cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("isManual")}>
+                    <div className="flex items-center gap-1">
+                      Tipo
+                      {sortField === "isManual" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="p-4 text-center cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("status")}>
+                    <div className="flex items-center justify-center gap-1">
+                      Status
+                      {sortField === "status" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="p-4 text-right cursor-pointer hover:bg-gray-100/80 transition-colors" onClick={() => toggleSort("valor")}>
+                    <div className="flex items-center justify-end gap-1">
+                      Valor Líquido
+                      {sortField === "valor" && (
+                        sortDirection === "asc" ? <ArrowUp className="w-3 h-3 text-brand-red shrink-0" /> : <ArrowDown className="w-3 h-3 text-brand-red shrink-0" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="p-4 text-right w-36 font-bold">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs">
+                {filteredComms.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="p-8 text-center text-gray-400">
+                      Nenhum registro de comissão correspondente aos filtros.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ) : (
+                  filteredComms.map((comm) => (
+                    <tr 
+                      key={comm.id} 
+                      className="hover:bg-gray-50/50 transition-colors"
+                    >
+                      <td className="p-4 text-gray-600 font-semibold">
+                        {comm.data ? new Date(comm.data + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
+                      </td>
+                      <td className="p-4 font-bold text-brand-ink">
+                        {comm.tecnico_nome}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        <div className="font-semibold">{comm.cliente_nome || "—"}</div>
+                        <div className="text-[10px] text-gray-400">{comm.equipamento_modelo || "—"} | SÉRIE: {comm.equipamento_serie || "—"}</div>
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        <div className="font-semibold">{comm.tipo_os || "—"}</div>
+                        <div className="text-[10px] text-gray-400">
+                          {comm.modo_debito_interno ? (
+                            <span className="text-amber-600 font-extrabold uppercase bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
+                              Déb. Interno (Ref: {comm.valor_referencia_servico?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })})
+                            </span>
+                          ) : (
+                            `O.S.: ${comm.valor_os?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) || "R$ 0,00"}`
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-4 text-gray-600 font-semibold max-w-xs truncate">
+                        {comm.descricao}
+                      </td>
+                      <td className="p-4">
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase border ${
+                          comm.isManual 
+                            ? "bg-purple-50 text-purple-700 border-purple-100" 
+                            : "bg-blue-50 text-blue-700 border-blue-100"
+                        }`}>
+                          {comm.isManual ? "MANUAL" : "AUTO"}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold border ${
+                          comm.status === "PAGO" 
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-100" 
+                            : "bg-amber-50 text-amber-800 border-amber-100"
+                        }`}>
+                          {comm.status}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right font-mono font-bold text-brand-ink">
+                        {comm.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </td>
+                      <td className="p-4 text-right space-x-1 flex items-center justify-end">
+                        {comm.isManual ? (
+                          <>
+                            <button
+                              onClick={() => openForm(comm as unknown as ComissaoManual)}
+                              className="p-1 text-sky-600 hover:bg-sky-50 rounded"
+                              title="Editar"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCommission(comm.id)}
+                              className="p-1 text-rose-600 hover:bg-rose-50 rounded"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => comm.payment_key && handleToggleOSPayment(comm.payment_key)}
+                            className={`px-2.5 py-1 text-[10px] font-black uppercase rounded transition-all flex items-center justify-center gap-1 group relative overflow-hidden ${
+                              comm.status === "PAGO"
+                                ? "bg-emerald-50 text-emerald-700 hover:bg-rose-50 hover:text-rose-700 border border-emerald-200 hover:border-rose-200"
+                                : "bg-emerald-600 text-white hover:bg-emerald-700 font-bold"
+                            }`}
+                          >
+                            {comm.status === "PAGO" ? (
+                              <>
+                                <span className="group-hover:hidden flex items-center gap-1 font-extrabold text-emerald-700">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  Pago
+                                </span>
+                                <span className="hidden group-hover:inline font-black text-rose-700">
+                                  Reverter
+                                </span>
+                              </>
+                            ) : (
+                              "Pagar"
+                            )}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* TAB 2: DETALHES DA COMISSÃO */}
+        {comissoesTab === "detalhes" && (
+          <div className="p-5 space-y-6">
+            <h4 className="text-sm font-extrabold uppercase text-brand-ink border-b pb-2">Extrato Detalhado por Colaborador</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {tecnicos.map(t => {
+                const tComms = filteredComms.filter(c => c.tecnico_id === t.id);
+                const tPendente = tComms.filter(c => c.status === "PENDENTE").reduce((s, c) => s + c.valor, 0);
+                const tPago = tComms.filter(c => c.status === "PAGO").reduce((s, c) => s + c.valor, 0);
+                const tTotal = tPendente + tPago;
+                return (
+                  <div key={t.id} className="border border-gray-200 rounded-xl p-4 space-y-3 hover:shadow-sm transition-shadow">
+                    <div className="flex justify-between items-center">
+                      <strong className="text-gray-800 text-sm font-black">{t.nome} ({t.apelido})</strong>
+                      <span className="text-[10px] bg-gray-100 text-gray-500 py-0.5 px-2 rounded-full font-bold uppercase">{t.cargo || "Técnico"}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center text-[10px] bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                      <div>
+                        <span className="text-gray-400 font-bold uppercase block">Pendente</span>
+                        <strong className="text-amber-600 font-mono text-xs block mt-1">{tPendente.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+                      </div>
+                      <div>
+                        <span className="text-gray-400 font-bold uppercase block">Pago</span>
+                        <strong className="text-emerald-600 font-mono text-xs block mt-1">{tPago.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+                      </div>
+                      <div>
+                        <span className="text-gray-400 font-bold uppercase block">Acumulado</span>
+                        <strong className="text-brand-ink font-mono text-xs block mt-1">{tTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] text-gray-500 pt-1">
+                      <span>Total de lançamentos: <strong>{tComms.length}</strong></span>
+                      <button
+                        onClick={() => {
+                          setSelectedTechFilter(String(t.id));
+                          setComissoesTab("lancamentos");
+                        }}
+                        className="text-blue-600 hover:underline font-bold"
+                      >
+                        Ver lançamentos &rarr;
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: HISTÓRICO DE PAGAMENTOS */}
+        {comissoesTab === "historico" && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  <th className="p-4 w-28">Data</th>
+                  <th className="p-4">Técnico Beneficiário</th>
+                  <th className="p-4">Cliente / Equipamento</th>
+                  <th className="p-4">Descrição</th>
+                  <th className="p-4">Tipo</th>
+                  <th className="p-4 text-center">Status</th>
+                  <th className="p-4 text-right">Valor Pago</th>
+                  <th className="p-4 text-right w-36 font-bold">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs">
+                {filteredComms.filter(c => c.status === "PAGO").length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-gray-400">
+                      Nenhum histórico de pagamento quitado para este filtro.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredComms.filter(c => c.status === "PAGO").map((comm) => (
+                    <tr key={comm.id} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="p-4 text-gray-600 font-semibold">
+                        {comm.data ? new Date(comm.data + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
+                      </td>
+                      <td className="p-4 font-bold text-brand-ink">{comm.tecnico_nome}</td>
+                      <td className="p-4 text-gray-600">
+                        <div className="font-semibold">{comm.cliente_nome || "—"}</div>
+                        <div className="text-[10px] text-gray-400">{comm.equipamento_modelo}</div>
+                      </td>
+                      <td className="p-4 text-gray-600 font-semibold max-w-xs truncate">{comm.descricao}</td>
+                      <td className="p-4">
+                        <span className="px-2 py-0.5 rounded text-[9px] font-extrabold uppercase border bg-blue-50 text-blue-700 border-blue-100">
+                          {comm.isManual ? "MANUAL" : "AUTO"}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold border bg-emerald-50 text-emerald-800 border-emerald-100">
+                          {comm.status}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right font-mono font-bold text-emerald-600">
+                        {comm.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </td>
+                      <td className="p-4 text-right flex items-center justify-end">
+                        {comm.isManual ? (
+                          <span className="text-gray-400 text-[10px] font-bold">Manual</span>
+                        ) : (
+                          <button
+                            onClick={() => comm.payment_key && handleToggleOSPayment(comm.payment_key)}
+                            className="px-2.5 py-1 text-[10px] font-black uppercase rounded bg-emerald-50 text-emerald-700 hover:bg-rose-50 hover:text-rose-700 border border-emerald-200 hover:border-rose-200 transition-all flex items-center justify-center gap-1 group"
+                          >
+                            <span className="group-hover:hidden flex items-center gap-1 font-extrabold text-emerald-700">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                              Pago
+                            </span>
+                            <span className="hidden group-hover:inline font-black text-rose-700">
+                              Reverter
+                            </span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* TAB 4: METAS */}
+        {comissoesTab === "metas" && (
+          <div className="p-5 space-y-6">
+            <div className="flex justify-between items-center border-b border-gray-100 pb-2">
+              <h4 className="text-sm font-extrabold uppercase text-brand-ink">Acompanhamento de Metas de Produtividade</h4>
+              <span className="text-[10px] bg-indigo-50 text-indigo-700 py-1 px-2.5 rounded font-black uppercase">Meta do Período: R$ 5.000,00</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {tecnicos.map(t => {
+                const tComms = filteredComms.filter(c => c.tecnico_id === t.id);
+                const totalComm = tComms.reduce((s, c) => s + c.valor, 0);
+                const targetVal = 5000.00;
+                const pct = Math.min(100, (totalComm / targetVal) * 100);
+                return (
+                  <div key={t.id} className="border border-gray-200 rounded-xl p-5 space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <strong className="text-gray-800 text-sm font-black">{t.nome}</strong>
+                        <span className="text-[10px] text-gray-400 block mt-0.5">Técnico Beneficiário</span>
+                      </div>
+                      <span className="text-[12px] font-black font-mono text-brand-ink">
+                        {pct.toFixed(1)}%
+                      </span>
+                    </div>
+                    {/* Visual bar */}
+                    <div className="space-y-1.5">
+                      <div className="w-full bg-gray-100 h-3 rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pct}%` }}
+                          transition={{ duration: 0.6 }}
+                          className={`h-full rounded-full ${
+                            pct >= 100 ? "bg-emerald-500" : pct >= 75 ? "bg-indigo-500" : pct >= 40 ? "bg-amber-500" : "bg-rose-500"
+                          }`}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] font-bold text-gray-400 uppercase">
+                        <span>Realizado: {totalComm.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                        <span>Meta: {targetVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: CONFIGURAÇÕES */}
+        {comissoesTab === "config" && (
+          <div className="p-6 space-y-6">
+            <div className="border-b border-gray-100 pb-2">
+              <h4 className="text-sm font-extrabold uppercase text-brand-ink">Políticas e Regras de Pagamento Ativas</h4>
+              <p className="text-gray-500 text-xs mt-0.5">Visão geral das regras e bases de cálculo para geração automática de tarifas.</p>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border border-gray-100 rounded-xl p-4 bg-gray-50 space-y-3">
+                <h5 className="font-extrabold text-xs text-brand-ink uppercase flex items-center gap-1.5">
+                  <Target className="w-4 h-4 text-brand-red animate-pulse" />
+                  Regra Geral de Vendas / Faturado
+                </h5>
+                <div className="space-y-1 text-xs text-gray-600">
+                  <p>&bull; Base de Cálculo: <strong className="text-gray-800">Faturamento M.O. + Deslocamento</strong></p>
+                  <p>&bull; Percentual Técnico Titular: <strong className="text-gray-800">20%</strong> sobre a base de cálculo</p>
+                  <p>&bull; Racha Auxiliar: <strong className="text-gray-800">Racha de 50/50</strong> se houver auxiliar escalado</p>
+                </div>
+              </div>
+
+              <div className="border border-gray-100 rounded-xl p-4 bg-gray-50 space-y-3">
+                <h5 className="font-extrabold text-xs text-brand-ink uppercase flex items-center gap-1.5">
+                  <RefreshCw className="w-4 h-4 text-indigo-600" />
+                  Garantias, Retrabalhos e Débito Interno
+                </h5>
+                <div className="space-y-1 text-xs text-gray-600">
+                  <p>&bull; Garantias / Retrabalhos: <strong className="text-gray-800">Sem comissão para o Técnico</strong> (cobertura operacional)</p>
+                  <p>&bull; Débito Interno (Kuhn/Entrega): <strong className="text-gray-800">Valor Fixo ou Horas + KM</strong></p>
+                  <p>&bull; Tarifa de Hora Técnica Kuhn: <strong className="text-gray-800">R$ 50,00/h</strong> de viagem/serviço</p>
+                  <p>&bull; Deslocamento KM Interno: <strong className="text-gray-800">R$ 1,50/km</strong> rodado</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Manual Commission Form Modal */}
