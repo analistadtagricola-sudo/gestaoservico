@@ -338,7 +338,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
           } else if (ruleToUse.baseCalculo === "horas_e_km_customizado") {
             const customHourRate = Number(ruleToUse.valorHoraComissao ?? 50);
             const customKmRate = Number(ruleToUse.valorKmComissao ?? 1.50);
-            const hrs = parseFloat(o.horas_trabalhadas_total || "0") || 0;
+            const hrs = 0; /* deprecated */
             const kms = Number(o.km_rodado_total) || 0;
             const hrsKmCalculated = (hrs * customHourRate) + (kms * customKmRate);
 
@@ -440,172 +440,54 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
       }
 
       let { rule, baseValue, baseDesc, techComm: techCommission, auxComm: auxCommission, techDesc: techDescSuffix, auxDesc: auxDescSuffix } = calcResult;
+      
+      const comissaoTecnico = techCommission;
+      const comissaoAuxiliar = auxCommission;
 
-      if (o.comissao_custom_opcao === "personalizado") {
-        techCommission = o.comissao_custom_valor_tecnico !== undefined ? o.comissao_custom_valor_tecnico : 0;
-        auxCommission = o.comissao_custom_valor_auxiliar !== undefined ? o.comissao_custom_valor_auxiliar : 0;
-        techDescSuffix = " (Personalizado)";
-        auxDescSuffix = " (Personalizado)";
-      }
-
-      // Add Main Tech commission
-      if (o.tecnico_id && tech) {
-        const isPaid = paidOSIds[`OS-${o.id}-tech`] || false;
+      if (o.tecnico_id && comissaoTecnico > 0) {
         commissions.push({
-          id: `OS-${o.id}-tech`,
+          id: `os_${o.id}_tech`,
+          payment_key: `os_${o.id}_tech`,
           os_id: o.id,
           numero_os: o.numero_os,
           tecnico_id: o.tecnico_id,
-          tecnico_nome: tech.apelido || tech.nome || "Técnico Não Definido",
-          data: o.data_termino || o.data_atendimento || o.created_at || "",
-          valor_os: totalOS,
-          valor_mao_obra: laborValue,
-          valor_comissao: techCommission,
-          status: isPaid ? "PAGO" : "PENDENTE" as "PAGO" | "PENDENTE",
-          descricao: `Comissão O.S. ${o.numero_os} (Técnico)${techDescSuffix}`,
-          cliente_nome: clienteNome,
-          equipamento_modelo: equipModelo,
-          equipamento_serie: equipSerie,
-          tipo_os: tipoOS,
-          modo_debito_interno: o.modo_debito_interno,
-          valor_referencia_servico: o.valor_referencia_servico
+          tecnico_nome: tech?.nome || "Técnico Removido",
+          data: o.data_encerramento || o.data_abertura || "",
+          valor: comissaoTecnico,
+          descricao: `O.S. ${o.numero_os || o.id} (${clienteNome}) - ${equipModelo}`,
+          detalhes_regra: rule.tipo,
+          status: paidOSIds[`os_${o.id}_tech`] ? "PAGO" : "PENDENTE",
+          tipo: "AUTOMATICA"
         });
       }
-
-      // Add Auxiliary Tech commission if exists
-      if (o.auxiliar_id) {
+      if (o.auxiliar_id && comissaoAuxiliar > 0) {
         const aux = tecnicos.find(t => t.id === o.auxiliar_id);
-        if (aux) {
-          const isPaid = paidOSIds[`OS-${o.id}-aux`] || false;
-          commissions.push({
-            id: `OS-${o.id}-aux`,
-            os_id: o.id,
-            numero_os: o.numero_os,
-            tecnico_id: o.auxiliar_id,
-            tecnico_nome: aux.apelido || aux.nome || "Auxiliar Não Definido",
-            data: o.data_termino || o.data_atendimento || o.created_at || "",
-            valor_os: totalOS,
-            valor_mao_obra: laborValue,
-            valor_comissao: auxCommission,
-            status: isPaid ? "PAGO" : "PENDENTE" as "PAGO" | "PENDENTE",
-            descricao: `Comissão O.S. ${o.numero_os} (Auxiliar)${auxDescSuffix}`,
-            cliente_nome: clienteNome,
-            equipamento_modelo: equipModelo,
-            equipamento_serie: equipSerie,
-            tipo_os: tipoOS,
-            modo_debito_interno: o.modo_debito_interno,
-            valor_referencia_servico: o.valor_referencia_servico
-          });
-        }
+        commissions.push({
+          id: `os_${o.id}_aux`,
+          payment_key: `os_${o.id}_aux`,
+          os_id: o.id,
+          numero_os: o.numero_os,
+          tecnico_id: o.auxiliar_id,
+          tecnico_nome: aux?.nome || "Auxiliar Removido",
+          data: o.data_encerramento || o.data_abertura || "",
+          valor: comissaoAuxiliar,
+          descricao: `[AUXILIAR] O.S. ${o.numero_os || o.id} (${clienteNome}) - ${equipModelo}`,
+          detalhes_regra: rule.tipo,
+          status: paidOSIds[`os_${o.id}_aux`] ? "PAGO" : "PENDENTE",
+          tipo: "AUTOMATICA"
+        });
       }
     });
-
     return commissions;
   };
 
-  // Combine automatic and manual commissions
   const getAllCommissions = () => {
-    const autoComms = getAutoCommissions().map(ac => ({
-      id: ac.id,
-      tecnico_id: ac.tecnico_id || 0,
-      tecnico_nome: ac.tecnico_nome,
-      numero_os: ac.numero_os || "—",
-      data: ac.data ? ac.data.substring(0, 10) : "",
-      valor: ac.valor_comissao,
-      descricao: ac.descricao,
-      status: ac.status,
-      isManual: false,
-      os_id: ac.os_id,
-      payment_key: ac.id, // Use unique key for payment toggle
-      cliente_nome: ac.cliente_nome,
-      equipamento_modelo: ac.equipamento_modelo,
-      equipamento_serie: ac.equipamento_serie,
-      tipo_os: ac.tipo_os,
-      valor_os: ac.valor_os,
-      modo_debito_interno: (ac as any).modo_debito_interno,
-      valor_referencia_servico: (ac as any).valor_referencia_servico
-    }));
-
-    const manualComms = comissoesManuais.map(mc => {
-      const tech = tecnicos.find(t => t.id === mc.tecnico_id);
-      return {
-        id: mc.id,
-        tecnico_id: mc.tecnico_id,
-        tecnico_nome: tech?.apelido || tech?.nome || "Técnico Não Definido",
-        numero_os: "—",
-        data: mc.data,
-        valor: mc.valor,
-        descricao: mc.descricao,
-        status: mc.status,
-        isManual: true,
-        os_id: undefined,
-        payment_key: mc.id,
-        cliente_nome: "Lançamento Manual",
-        equipamento_modelo: "—",
-        equipamento_serie: "—",
-        tipo_os: "Lançamento Manual",
-        valor_os: 0,
-        modo_debito_interno: false,
-        valor_referencia_servico: 0
-      };
-    });
-
-    return [...autoComms, ...manualComms].sort((a, b) => b.data.localeCompare(a.data));
-  };
-
-  // Filter commissions
-  const getFilteredCommissions = () => {
-    const all = getAllCommissions();
-    const filtered = all.filter(c => {
-      // Search term filter
-      const q = searchTerm.toLowerCase();
-      const matchesSearch = c.tecnico_nome.toLowerCase().includes(q) || c.descricao.toLowerCase().includes(q);
-      
-      // Tech select filter
-      const matchesTech = selectedTechFilter === "" || String(c.tecnico_id) === selectedTechFilter;
-      
-      // Status filter
-      const matchesStatus = selectedStatusFilter === "TODAS" || c.status === selectedStatusFilter;
-
-      // Date range filter
-      let matchesDate = true;
-      if (startDate) {
-        matchesDate = matchesDate && c.data >= startDate;
-      }
-      if (endDate) {
-        matchesDate = matchesDate && c.data <= endDate;
-      }
-
-      return matchesSearch && matchesTech && matchesStatus && matchesDate;
-    });
-
-    return [...filtered].sort((a, b) => {
-      let valA: any = a[sortField as keyof any];
-      let valB: any = b[sortField as keyof any];
-
-      if (sortField === "tecnico_nome") {
-        valA = a.tecnico_nome || "";
-        valB = b.tecnico_nome || "";
-      }
-
-      if (valA === undefined || valA === null) valA = "";
-      if (valB === undefined || valB === null) valB = "";
-
-      if (typeof valA === "string" && typeof valB === "string") {
-        return sortDirection === "asc"
-          ? valA.localeCompare(valB, "pt-BR", { numeric: true })
-          : valB.localeCompare(valA, "pt-BR", { numeric: true });
-      }
-
-      if (valA < valB) return sortDirection === "asc" ? -1 : 1;
-      if (valA > valB) return sortDirection === "asc" ? 1 : -1;
-      return 0;
-    });
+    return [...getAutoCommissions(), ...comissoesManuais];
   };
 
   const toggleSort = (field: string) => {
     if (sortField === field) {
-      setSortDirection(prev => prev === "asc" ? "desc" : "asc");
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
       setSortField(field);
       setSortDirection("asc");
@@ -712,7 +594,7 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
   };
 
   // Calculate high-level summary stats
-  const filteredComms = getFilteredCommissions();
+  const filteredComms = getAllCommissions();
   const totalPendente = filteredComms.filter(c => c.status === "PENDENTE").reduce((sum, c) => sum + c.valor, 0);
   const totalPago = filteredComms.filter(c => c.status === "PAGO").reduce((sum, c) => sum + c.valor, 0);
   const totalGeral = totalPendente + totalPago;

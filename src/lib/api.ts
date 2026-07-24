@@ -111,6 +111,19 @@ function sanitizeClientePayload(c: any): any {
 import { supabase } from "./supabase";
 import { Cliente, Implemento, Tecnico, OrdemServico, Apontamento, PlanoManutencao, PlanoRevisao, Veiculo, TipoAtendimento, Usuario, Permissions } from "../types";
 
+const globalPromises: Record<string, Promise<any> | null> = {};
+
+function deduplicateCall<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  if (globalPromises[key]) {
+    return globalPromises[key] as Promise<T>;
+  }
+  const promise = fn().finally(() => {
+    globalPromises[key] = null;
+  });
+  globalPromises[key] = promise;
+  return promise;
+}
+
 // Helper to handle API responses and fallbacks
 const handleResponse = async <T>(promise: Promise<{ data: T | null; error: any }>, fallback: T): Promise<T> => {
   try {
@@ -177,51 +190,57 @@ const INITIAL_TIPOS_ATENDIMENTO: TipoAtendimento[] = [
   { id: 7, nome: "OUTRO", descricao: "Atendimentos diversos não categorizados", ativo: true }
 ];
 
-// Initial local storage items for Planos and Revisões
-const INITIAL_PLANOS: PlanoManutencao[] = [];
+// In-memory caches for Planos and Revisões directly from Supabase
+let planosCache: PlanoManutencao[] = [];
+let revisoesCache: PlanoRevisao[] = [];
 
-const INITIAL_REVISOES: PlanoRevisao[] = [];
+async function refreshPlanosCache() {
+  try {
+    const { data, error } = await supabase.from("planos_manutencao").select("*").order("id");
+    if (!error && data) {
+      planosCache = data.map((d: any) => ({
+        id: d.id,
+        fabricante: d.fabricante || "",
+        modelo: d.modelo || "",
+        garantia_meses: Number(d.garantia_meses || 12),
+        horimetro_base: Number(d.horimetro_base || 50),
+        ativo: d.ativo !== false,
+        observacao: d.observacao || "",
+        grupo: d.grupo || "TRATORES"
+      }));
+    }
+  } catch (e) {
+    console.error("Erro ao carregar planos de manutenção do Supabase:", e);
+  }
+}
+
+async function refreshRevisoesCache() {
+  try {
+    const { data, error } = await supabase.from("revisoes_plano").select("*");
+    if (!error && data) {
+      revisoesCache = data.map((d: any) => ({
+        id_revisao: d.id_revisao,
+        id_plano: d.id_plano,
+        revisao_numero: Number(d.revisao_numero),
+        horas_limite: Number(d.horas_limite),
+        meses_limite: Number(d.meses_limite),
+        descricao: d.descricao || ""
+      }));
+    }
+  } catch (e) {
+    console.error("Erro ao carregar revisões do Supabase:", e);
+  }
+}
+
+refreshPlanosCache();
+refreshRevisoesCache();
 
 export const API = {
   clientes: {
     async listar(): Promise<Cliente[]> {
-      const saved = localStorage.getItem("gst_clientes");
-      if (saved) {
+      return deduplicateCall("clientes", async () => {
         try {
           let allData: Cliente[] = [];
-          let hasMore = true;
-          let start = 0;
-          const step = 1000;
-
-          while (hasMore) {
-            const { data, error } = await supabase
-              .from("clientes")
-              .select("*")
-              .order("razao_social")
-              .range(start, start + step - 1);
-            
-            if (error) throw error;
-            
-            if (data && data.length > 0) {
-              allData = [...allData, ...data];
-              start += step;
-              if (data.length < step) {
-                hasMore = false;
-              }
-            } else {
-              hasMore = false;
-            }
-          }
-          localStorage.setItem("gst_clientes", JSON.stringify(allData));
-          return allData;
-        } catch (e) {
-          console.warn("Supabase fetch clients error, using local data:", e);
-        }
-        return JSON.parse(saved);
-      }
-
-      try {
-        let allData: Cliente[] = [];
         let hasMore = true;
         let start = 0;
         const step = 1000;
@@ -246,12 +265,12 @@ export const API = {
           }
         }
         
-        localStorage.setItem("gst_clientes", JSON.stringify(allData));
         return allData;
       } catch (err) {
-        console.warn("Falling back to simulated clients...", err);
+        console.error("Erro ao listar clientes do Supabase:", err);
         return [];
       }
+      });
     },
 
     async buscar(id: number): Promise<Cliente | null> {
@@ -380,8 +399,9 @@ export const API = {
 
   implementos: {
     async listar(): Promise<Implemento[]> {
-      try {
-        let rawData: any[] = [];
+      return deduplicateCall("implementos", async () => {
+        try {
+          let rawData: any[] = [];
         let relationError = false;
 
         // Try to fetch with relation join first
@@ -464,7 +484,7 @@ export const API = {
           }
 
           // Fetch all clients to map in-memory
-          const clientsList = await this.clientes?.listar() || [];
+          const clientsList = await API.clientes.listar().catch(() => []);
           
           const clisMap = new Map<number, any>();
           clientsList.forEach(c => clisMap.set(c.id!, c));
@@ -491,11 +511,10 @@ export const API = {
 
         return mergedWithPlans;
       } catch (err) {
-        console.warn("Falling back to simulated implementos...", err);
-        const saved = localStorage.getItem("gst_implementos");
-        if (saved) return JSON.parse(saved);
+        console.error("Erro ao listar implementos do Supabase:", err);
         return [];
       }
+      });
     },
 
     async buscar(id: number): Promise<Implemento | null> {
@@ -867,8 +886,9 @@ export const API = {
 
   tecnicos: {
     async listar(): Promise<Tecnico[]> {
-      try {
-        const { data, error } = await supabase
+      return deduplicateCall("tecnicos", async () => {
+        try {
+          const { data, error } = await supabase
           .from("tecnicos")
           .select("*")
           .order("nome");
@@ -885,11 +905,10 @@ export const API = {
 
         return merged;
       } catch (err) {
-        console.warn("Falling back to simulated tecnicos...");
-        const saved = localStorage.getItem("gst_tecnicos");
-        if (saved) return JSON.parse(saved);
+        console.error("Erro ao listar tecnicos do Supabase:", err);
         return [];
       }
+      });
     },
 
     async buscar(id: number): Promise<Tecnico | null> {
@@ -1031,8 +1050,9 @@ export const API = {
 
   ordensServico: {
     async listar(): Promise<OrdemServico[]> {
-      try {
-        let allDataWithClientes: any[] = [];
+      return deduplicateCall("ordensServico", async () => {
+        try {
+          let allDataWithClientes: any[] = [];
         let hasMore = true;
         let startRel = 0;
         const step = 1000;
@@ -1112,17 +1132,10 @@ export const API = {
         localStorage.setItem("gst_ordens_servico", JSON.stringify(fetchedData));
         return fetchedData;
       } catch (err) {
-        console.warn("Database fetch failed, falling back to local storage...", err);
-        const saved = localStorage.getItem("gst_ordens_servico");
-        if (saved) {
-          try {
-            return JSON.parse(saved);
-          } catch (e) {
-            console.error("Error parsing local ordens_servico list:", e);
-          }
-        }
+        console.error("Erro ao listar ordens de serviço do Supabase:", err);
         return [];
       }
+      });
     },
 
     async buscar(id: number): Promise<OrdemServico | null> {
@@ -1187,13 +1200,12 @@ export const API = {
     },
 
     async inserir(os: OrdemServico): Promise<OrdemServico> {
-      // 1. Generate OS Number if missing or "EMPTY" or "NOVA" or "OS-TMP-"
-      if (!os.numero_os || os.numero_os.trim() === "" || os.numero_os === "EMPTY" || os.numero_os === "NOVA" || os.numero_os.startsWith("OS-TMP-")) {
-        const list = await this.listar();
-        const lastNum = list.reduce((max, item) => {
-          const match = item.numero_os?.match(/OS(\d+)/);
-          return match ? Math.max(max, parseInt(match[1])) : max;
-        }, 0);
+      const list = await this.listar();
+      const lastNum = list.reduce((max, item) => {
+        const match = item.numero_os?.match(/OS(\d+)/);
+        return match ? Math.max(max, parseInt(match[1])) : max;
+      }, 0);
+      if (!os.numero_os) {
         os.numero_os = "OS" + String(lastNum + 1).padStart(6, "0");
       }
 
@@ -1205,17 +1217,14 @@ export const API = {
         "tipo_atendimento", "prioridade", "reclamacao", "observacao", "solicitante",
         "data_abertura", "data_encerramento", "data_atendimento", "data_termino",
         "hora_inicial", "hora_final", "servico_executado", "veiculo_usado",
-        "km_inicial", "km_final", "km_rodado_total", "horimetro_final",
-        "revisao_executada", "horas_trabalhadas_total", "valor_km_unitario",
+        "km_inicial", "km_final", "km_rodado_total",
+        "revisao_executada", "valor_km_unitario",
         "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
         "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
         "modo_debito_interno", "classificacao_atendimento_interno", "valor_referencia_servico", "base_calculo_referencia", "centro_custo_debito", "observacao_debito",
-        "comissao_custom_opcao", "comissao_custom_valor_tecnico", "comissao_custom_valor_auxiliar",
-        "localizacao_maquina", "localizacao",
-        // DB Field Mapping aliases
-        "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado"
+        "localizacao", "obs", "horimetro_atual"
       ];
-      
+
       let payload: any = {};
       for (const col of validColumns) {
         if (col in cleanOS && (cleanOS as any)[col] !== undefined) {
@@ -1223,14 +1232,8 @@ export const API = {
         }
       }
 
-      // Defensive redundancy mapping
-      if (cleanOS.reclamacao && !payload.problema) payload.problema = cleanOS.reclamacao;
-      if (cleanOS.servico_executado) { payload.servico = cleanOS.servico_executado; 
-        payload.servico_executado = cleanOS.servico_executado;
-      }
-      if (cleanOS.observacao && !payload.obs) payload.obs = cleanOS.observacao;
       if (cleanOS.horimetro_final !== undefined && cleanOS.horimetro_final !== null && String(cleanOS.horimetro_final) !== "") {
-        payload.horimetro = cleanOS.horimetro_final;
+        payload.horimetro_atual = cleanOS.horimetro_final;
         // Ensure horimetro tag is present in obs/observacao so Supabase saves it inside the text field
         const hTag = `[Horímetro: ${cleanOS.horimetro_final}h]`;
         if (!String(payload.obs || "").includes("[Horímetro:")) {
@@ -1252,11 +1255,9 @@ export const API = {
           }).catch(() => {});
         }
       }
-      if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
-      
+
       const locValInserir = String(cleanOS.localizacao_maquina || (cleanOS as any).localizacao || "").trim();
       if (locValInserir) {
-        payload.localizacao_maquina = locValInserir;
         payload.localizacao = locValInserir;
         const locTag = `[Localização: ${locValInserir}]`;
         if (!String(payload.obs || "").includes("[Localização:")) {
@@ -1324,56 +1325,42 @@ export const API = {
       // Default data_abertura if missing
       if (!payload.data_abertura) payload.data_abertura = new Date().toISOString();
 
-      let attempt = 0;
-      while (attempt < 15) {
-        try {
-          const { data, error } = await supabase
-            .from("ordens_servico")
-            .insert(payload)
-            .select();
-            
-          if (error) {
-            const colName = extractMissingColumn(error.message || error.details || error.hint || "", payload);
-            if (colName && colName in payload) {
-              console.warn(`Column '${colName}' not in DB. Removing...`);
-              delete (payload as any)[colName];
-              attempt++;
-              continue;
-            }
-            throw error;
-          }
-          
-          if (data && data[0]) {
-            if (cleanOS.localizacao_maquina) {
-              const osLocMapStr = localStorage.getItem("gst_os_localizacao");
-              const osLocMap = osLocMapStr ? JSON.parse(osLocMapStr) : {};
-              osLocMap[data[0].id] = cleanOS.localizacao_maquina.trim();
-              localStorage.setItem("gst_os_localizacao", JSON.stringify(osLocMap));
-            }
-            return await this.buscar(data[0].id) || data[0];
-          }
-          break;
-        } catch (err) {
-          console.error("Insert failed details:", JSON.stringify(err, null, 2));
-          break;
-        }
-      }
-      
-      // Fallback local storage insert
       try {
-        const saved = localStorage.getItem("gst_ordens_servico");
-        const list: OrdemServico[] = saved ? JSON.parse(saved) : [];
-        const nextId = Math.max(0, ...list.map(o => Number(o.id) || 0)) + 1;
-        const result = { ...os, id: os.id || nextId };
-        localStorage.setItem("gst_ordens_servico", JSON.stringify([result, ...list.filter(o => o.id !== result.id)]));
-        return result;
-      } catch (e) {
-        return { ...os, id: os.id || Date.now() };
+        const { data, error } = await supabase
+          .from("ordens_servico")
+          .insert(payload)
+          .select();
+            
+        if (error) {
+          throw error;
+        }
+          
+        if (data && data[0]) {
+          if (cleanOS.localizacao_maquina) {
+            const osLocMapStr = localStorage.getItem("gst_os_localizacao");
+            const osLocMap = osLocMapStr ? JSON.parse(osLocMapStr) : {};
+            osLocMap[data[0].id] = cleanOS.localizacao_maquina;
+            localStorage.setItem("gst_os_localizacao", JSON.stringify(osLocMap));
+          }
+          const savedOS = await this.buscar(data[0].id) || data[0];
+          const updatedList = [...list, savedOS];
+          localStorage.setItem("gst_ordens_servico", JSON.stringify(updatedList));
+          return savedOS;
+        }
+      } catch (err) {
+        console.warn("Could not insert to Supabase, saving locally...", err);
       }
+
+      // Local fallback
+      const newId = list.reduce((max, o) => Math.max(max, o.id || 0), 0) + 1;
+      const newOS = { ...os, id: newId };
+      const updatedList = [...list, newOS];
+      localStorage.setItem("gst_ordens_servico", JSON.stringify(updatedList));
+      return newOS as unknown as OrdemServico;
     },
 
-    async atualizar(id: number, os: OrdemServico): Promise<OrdemServico> {
-      if (!os.numero_os || os.numero_os.trim() === "" || os.numero_os === "EMPTY" || os.numero_os === "NOVA" || os.numero_os.startsWith("OS-TMP-")) {
+    async atualizar(id: number, os: Partial<OrdemServico>): Promise<OrdemServico> {
+      if (!os.numero_os && id > 0) {
         try {
           const list = await this.listar();
           const lastNum = list.reduce((max, item) => {
@@ -1392,14 +1379,12 @@ export const API = {
         "tipo_atendimento", "prioridade", "reclamacao", "observacao", "solicitante",
         "data_abertura", "data_encerramento", "data_atendimento", "data_termino",
         "hora_inicial", "hora_final", "servico_executado", "veiculo_usado",
-        "km_inicial", "km_final", "km_rodado_total", "horimetro_final",
-        "revisao_executada", "horas_trabalhadas_total", "valor_km_unitario",
+        "km_inicial", "km_final", "km_rodado_total",
+        "revisao_executada", "valor_km_unitario",
         "valor_hora_unitario", "valor_deslocamento", "valor_mao_obra",
         "valor_terceiros", "valor_total", "nota_fiscal", "num_nota_fiscal", "data_nota_fiscal",
         "modo_debito_interno", "classificacao_atendimento_interno", "valor_referencia_servico", "base_calculo_referencia", "centro_custo_debito", "observacao_debito",
-        "comissao_custom_opcao", "comissao_custom_valor_tecnico", "comissao_custom_valor_auxiliar",
-        "localizacao_maquina", "localizacao",
-        "problema", "problema_relatado", "servico", "laudo", "obs", "horimetro", "km_rodado", "servico_executado"
+        "localizacao", "obs", "horimetro_atual"
       ];
       
       let payload: any = {};
@@ -1409,13 +1394,8 @@ export const API = {
         }
       }
       
-      if (cleanOS.reclamacao && !payload.problema) payload.problema = cleanOS.reclamacao;
-      if (cleanOS.servico_executado) { payload.servico = cleanOS.servico_executado; 
-        payload.servico_executado = cleanOS.servico_executado;
-      }
-      if (cleanOS.observacao && !payload.obs) payload.obs = cleanOS.observacao;
       if (cleanOS.horimetro_final !== undefined && cleanOS.horimetro_final !== null && String(cleanOS.horimetro_final) !== "") {
-        payload.horimetro = cleanOS.horimetro_final;
+        payload.horimetro_atual = cleanOS.horimetro_final;
         // Ensure horimetro tag is present in obs/observacao so Supabase saves it inside the text field
         const hTag = `[Horímetro: ${cleanOS.horimetro_final}h]`;
         if (!String(payload.obs || "").includes("[Horímetro:")) {
@@ -1437,11 +1417,9 @@ export const API = {
           }).catch(() => {});
         }
       }
-      if (cleanOS.km_rodado_total && !payload.km_rodado) payload.km_rodado = cleanOS.km_rodado_total;
-      
+
       const locValAtualizar = String(cleanOS.localizacao_maquina || (cleanOS as any).localizacao || "").trim();
       if (locValAtualizar) {
-        payload.localizacao_maquina = locValAtualizar;
         payload.localizacao = locValAtualizar;
         const locTag = `[Localização: ${locValAtualizar}]`;
         if (!String(payload.obs || "").includes("[Localização:")) {
@@ -1504,67 +1482,48 @@ export const API = {
         }
       }
       
-      let attempt = 0;
-      while (attempt < 15) {
-        try {
-          let { data, error } = await supabase
+      try {
+        let { data, error } = await supabase
+          .from("ordens_servico")
+          .update(payload)
+          .eq("id", id)
+          .select();
+            
+        if (!error && (!data || data.length === 0) && os.numero_os) {
+          const { data: numData, error: numErr } = await supabase
             .from("ordens_servico")
             .update(payload)
-            .eq("id", id)
+            .eq("numero_os", String(os.numero_os).trim())
             .select();
-            
-          if (!error && (!data || data.length === 0) && os.numero_os) {
-            const { data: numData, error: numErr } = await supabase
-              .from("ordens_servico")
-              .update(payload)
-              .eq("numero_os", String(os.numero_os).trim())
-              .select();
-            if (!numErr && numData && numData.length > 0) {
-              data = numData;
-            }
+          if (!numErr && numData && numData.length > 0) {
+            data = numData;
           }
-
-          if (error) {
-            const colName = extractMissingColumn(error.message || error.details || error.hint || "", payload);
-            if (colName && colName in payload) {
-              console.warn(`Column '${colName}' not in DB. Removing...`);
-              delete (payload as any)[colName];
-              attempt++;
-              continue;
-            }
-            throw error;
-          }
-
-          if (!data || data.length === 0) {
-            // Row was not found in Supabase. Attempt insert with ID
-            const insertPayload = { ...payload, id };
-            const { data: insData, error: insErr } = await supabase
-              .from("ordens_servico")
-              .insert(insertPayload)
-              .select();
-
-            if (insErr) {
-              const colName = extractMissingColumn(insErr.message || insErr.details || insErr.hint || "", insertPayload);
-              if (colName && colName in insertPayload) {
-                console.warn(`Column '${colName}' not in DB during insert fallback. Removing...`);
-                delete (payload as any)[colName];
-                delete (insertPayload as any)[colName];
-                attempt++;
-                continue;
-              }
-            }
-
-            if (insData && insData[0]) {
-              return await this.buscar(insData[0].id) || insData[0];
-            }
-          } else {
-            return await this.buscar(data[0].id) || data[0];
-          }
-          break;
-        } catch (err) {
-          console.error("Update failed details:", JSON.stringify(err, null, 2));
-          break;
         }
+
+        if (error) {
+          throw error;
+        }
+
+        if (!data || data.length === 0) {
+          // Row was not found in Supabase. Attempt insert with ID
+          const insertPayload = { ...payload, id };
+          const { data: insData, error: insErr } = await supabase
+            .from("ordens_servico")
+            .insert(insertPayload)
+            .select();
+
+          if (insErr) {
+            throw insErr;
+          }
+
+          if (insData && insData[0]) {
+            return await this.buscar(insData[0].id) || insData[0];
+          }
+        } else {
+          return await this.buscar(data[0].id) || data[0];
+        }
+      } catch (err) {
+        console.error("Update failed details:", JSON.stringify(err, null, 2));
       }
       
       // Sync local storage fallback safely
@@ -1576,13 +1535,19 @@ export const API = {
         if (index >= 0) {
           updated = list.map(o => Number(o.id) === Number(id) ? { ...o, ...os, id } : o);
         } else {
-          updated = [{ ...os, id }, ...list];
+          updated = [{ ...os, id, numero_os: os.numero_os || "PENDENTE", status: os.status || "ABERTA" } as any as OrdemServico, ...list];
         }
         localStorage.setItem("gst_ordens_servico", JSON.stringify(updated));
       } catch (e) {
         console.error("Local storage fallback sync error:", e);
       }
-      return { ...os, id };
+      const result = {
+        ...os,
+        id,
+        numero_os: os.numero_os || "PENDENTE",
+        status: os.status || "ABERTA"
+      } as any as OrdemServico;
+      return result;
     },
 
     async excluir(id: number): Promise<boolean> {
@@ -1599,6 +1564,21 @@ export const API = {
       const filtered = list.filter(o => o.id !== id);
       localStorage.setItem("gst_ordens_servico", JSON.stringify(filtered));
       return true;
+    },
+
+    async excluirTodos(): Promise<boolean> {
+      localStorage.setItem("gst_ordens_servico", JSON.stringify([]));
+      try {
+        const { error } = await supabase
+          .from("ordens_servico")
+          .delete()
+          .neq("id", -999999);
+        if (error) throw error;
+        return true;
+      } catch (err) {
+        console.warn("ERRO SUPABASE EXCLUIR TODAS ORDENS DE SERVICO:", err);
+        return true;
+      }
     },
 
     async finalizar(id: number): Promise<OrdemServico> {
@@ -1673,7 +1653,6 @@ export const API = {
   apontamentos: {
     async listar(osId: number): Promise<Apontamento[]> {
       try {
-        console.log("Listing appointments for OS:", osId);
         const { data, error } = await supabase
           .from("os_apontamentos")
           .select(`
@@ -1701,38 +1680,15 @@ export const API = {
           tecnicos: item.tecnicos
         }));
 
-        // Merge with localStorage for resilience
-        const saved = localStorage.getItem("gst_apontamentos");
-        let localItems: Apontamento[] = [];
-        if (saved) {
-          try {
-            const list: Apontamento[] = JSON.parse(saved);
-            localItems = list.filter(a => 
-              Number(a.os_id) === Number(osId) && 
-              !dbItems.find(db => String(db.id) === String(a.id))
-            );
-          } catch (e) {
-            console.error("Local storage parse error:", e);
-          }
-        }
-
-        const allItems = [...dbItems, ...localItems];
         // Sort by date and time
-        return allItems.sort((a, b) => {
+        return dbItems.sort((a, b) => {
           const dateA = a.data_servico || "";
           const dateB = b.data_servico || "";
           if (dateA !== dateB) return dateA.localeCompare(dateB);
           return (a.hora_inicial || "").localeCompare(b.hora_inicial || "");
         });
       } catch (err) {
-        console.error("Error listing pointing:", err);
-        const saved = localStorage.getItem("gst_apontamentos");
-        if (saved) {
-          try {
-            const list: Apontamento[] = JSON.parse(saved);
-            return list.filter(a => Number(a.os_id) === Number(osId));
-          } catch (e) {}
-        }
+        console.error("Erro ao listar apontamentos do Supabase:", err);
         return [];
       }
     },
@@ -1996,64 +1952,23 @@ export const API = {
   },
 
   planos: {
-    listar(): PlanoManutencao[] {
-      const saved = localStorage.getItem("gst_planos");
-      const localList: PlanoManutencao[] = saved ? JSON.parse(saved) : INITIAL_PLANOS;
-      if (!saved) {
-        localStorage.setItem("gst_planos", JSON.stringify(INITIAL_PLANOS));
-      }
-
-      const remotePromise = (async () => {
-        try {
-          const { data, error } = await supabase
-            .from("planos_manutencao")
-            .select("*")
-            .order("id", { ascending: true });
-          if (!error && data) {
-            const mapped: PlanoManutencao[] = data.map((d: any) => ({
-              id: d.id,
-              fabricante: d.fabricante || "",
-              modelo: d.modelo || "",
-              garantia_meses: Number(d.garantia_meses || 12),
-              horimetro_base: Number(d.horimetro_base || 50),
-              ativo: d.ativo !== false,
-              observacao: d.observacao || "",
-              grupo: d.grupo || "TRATORES"
-            }));
-            localStorage.setItem("gst_planos", JSON.stringify(mapped));
-            return mapped;
-          }
-        } catch (err) {
-          console.warn("Could not fetch planos from Supabase:", err);
-        }
-        return localList;
-      })();
-
-      const result = [...localList];
-      (result as any).then = remotePromise.then.bind(remotePromise);
-      (result as any).catch = remotePromise.catch.bind(remotePromise);
-      return result as any;
+    async listar(): Promise<PlanoManutencao[]> {
+      return deduplicateCall("planos_manutencao", async () => {
+        await refreshPlanosCache();
+        return planosCache;
+      });
     },
 
-    buscar(id: string): PlanoManutencao | null {
-      const list = this.listar();
+    async buscar(id: string): Promise<PlanoManutencao | null> {
+      const list = await this.listar();
       return list.find(p => p.id === id) || null;
     },
 
     async salvar(plano: PlanoManutencao): Promise<PlanoManutencao> {
-      const saved = localStorage.getItem("gst_planos");
-      const list: PlanoManutencao[] = saved ? JSON.parse(saved) : INITIAL_PLANOS;
-      let updatedList: PlanoManutencao[];
       let targetPlano = { ...plano };
-      if (!plano.id) {
-        const nextNum = list.reduce((max, p) => Math.max(max, parseInt(p.id.replace("PM", "")) || 0), 0) + 1;
-        targetPlano.id = "PM" + String(nextNum).padStart(6, "0");
-        updatedList = [...list, targetPlano];
-      } else {
-        updatedList = list.map(p => p.id === plano.id ? targetPlano : p);
+      if (!targetPlano.id) {
+        targetPlano.id = "PM" + Date.now().toString().slice(-6);
       }
-      localStorage.setItem("gst_planos", JSON.stringify(updatedList));
-
       try {
         const payload = {
           id: targetPlano.id,
@@ -2068,86 +1983,40 @@ export const API = {
         const { error } = await supabase
           .from("planos_manutencao")
           .upsert(payload);
-        if (error) console.error("Error saving plano to Supabase:", error);
+        if (error) throw error;
+        await refreshPlanosCache();
       } catch (err) {
-        console.warn("Could not sync plano to Supabase:", err);
+        console.error("Erro ao salvar plano de manutenção no Supabase:", err);
+        throw err;
       }
       return targetPlano;
     },
 
     async excluir(id: string): Promise<boolean> {
-      const saved = localStorage.getItem("gst_planos");
-      const list: PlanoManutencao[] = saved ? JSON.parse(saved) : INITIAL_PLANOS;
-      const filtered = list.filter(p => p.id !== id);
-      localStorage.setItem("gst_planos", JSON.stringify(filtered));
-
       try {
         await supabase.from("revisoes_plano").delete().eq("id_plano", id);
         const { error } = await supabase.from("planos_manutencao").delete().eq("id", id);
-        if (error) console.error("Error deleting plano from Supabase:", error);
+        if (error) throw error;
+        await refreshPlanosCache();
+        await refreshRevisoesCache();
+        return true;
       } catch (err) {
-        console.warn("Could not delete plano from Supabase:", err);
+        console.error("Erro ao excluir plano de manutenção do Supabase:", err);
+        return false;
       }
-      return true;
     },
 
     revisoes: {
       listar(planoId: string): PlanoRevisao[] {
-        const saved = localStorage.getItem("gst_revisoes");
-        const list: PlanoRevisao[] = saved ? JSON.parse(saved) : INITIAL_REVISOES;
-        if (!saved) {
-          localStorage.setItem("gst_revisoes", JSON.stringify(INITIAL_REVISOES));
-        }
-        const filtered = list.filter(r => r.id_plano === planoId).sort((a, b) => a.revisao_numero - b.revisao_numero);
-
-        const remotePromise = (async () => {
-          try {
-            const { data, error } = await supabase
-              .from("revisoes_plano")
-              .select("*")
-              .eq("id_plano", planoId)
-              .order("revisao_numero", { ascending: true });
-            if (!error && data) {
-              const mapped: PlanoRevisao[] = data.map((d: any) => ({
-                id_revisao: d.id_revisao,
-                id_plano: d.id_plano,
-                revisao_numero: Number(d.revisao_numero),
-                horas_limite: Number(d.horas_limite),
-                meses_limite: Number(d.meses_limite),
-                descricao: d.descricao || ""
-              }));
-              const freshSaved = localStorage.getItem("gst_revisoes");
-              const allLocal: PlanoRevisao[] = freshSaved ? JSON.parse(freshSaved) : INITIAL_REVISOES;
-              const others = allLocal.filter(r => r.id_plano !== planoId);
-              localStorage.setItem("gst_revisoes", JSON.stringify([...others, ...mapped]));
-              return mapped;
-            }
-          } catch (err) {
-            console.warn("Could not fetch revisoes from Supabase:", err);
-          }
-          return filtered;
-        })();
-
-        const result = [...filtered];
-        (result as any).then = remotePromise.then.bind(remotePromise);
-        (result as any).catch = remotePromise.catch.bind(remotePromise);
-        return result as any;
+        refreshRevisoesCache();
+        return revisoesCache.filter(r => r.id_plano === planoId).sort((a, b) => a.revisao_numero - b.revisao_numero);
       },
 
       async salvar(revisao: PlanoRevisao): Promise<PlanoRevisao> {
-        const saved = localStorage.getItem("gst_revisoes");
-        const list: PlanoRevisao[] = saved ? JSON.parse(saved) : INITIAL_REVISOES;
-        let updatedList: PlanoRevisao[];
         let targetRev = { ...revisao };
-        if (!revisao.id_revisao) {
-          const nextNum = list.reduce((max, r) => Math.max(max, parseInt(r.id_revisao?.replace("PR", "") || "0") || 0), 0) + 1;
-          targetRev.id_revisao = "PR" + String(nextNum).padStart(6, "0");
-          updatedList = [...list, targetRev];
-        } else {
-          updatedList = list.map(r => r.id_revisao === revisao.id_revisao ? targetRev : r);
+        if (!targetRev.id_revisao) {
+          targetRev.id_revisao = "PR" + Date.now().toString().slice(-6);
         }
-        localStorage.setItem("gst_revisoes", JSON.stringify(updatedList));
-
         try {
           const payload = {
             id_revisao: targetRev.id_revisao,
@@ -2160,27 +2029,20 @@ export const API = {
           const { error } = await supabase
             .from("revisoes_plano")
             .upsert(payload);
-          if (error) console.error("Error saving revisao to Supabase:", error);
+          if (error) throw error;
+          await refreshRevisoesCache();
         } catch (err) {
-          console.warn("Could not sync revisao to Supabase:", err);
+          console.error("Erro ao salvar revisão no Supabase:", err);
+          throw err;
         }
         return targetRev;
       },
 
       async excluir(id: string, planoId?: string, revisaoNum?: number): Promise<boolean> {
-        const freshSaved = localStorage.getItem("gst_revisoes");
-        const list: PlanoRevisao[] = freshSaved ? JSON.parse(freshSaved) : INITIAL_REVISOES;
-        const filtered = list.filter(r => {
-          if (id && r.id_revisao === id) return false;
-          if (planoId && r.id_plano === planoId && r.revisao_numero === revisaoNum) return false;
-          return true;
-        });
-        localStorage.setItem("gst_revisoes", JSON.stringify(filtered));
-
         try {
           if (id) {
             const { error: err1 } = await supabase.from("revisoes_plano").delete().eq("id_revisao", id);
-            if (err1) console.error("Error deleting revisao by id from Supabase:", err1);
+            if (err1) throw err1;
           }
           if (planoId && revisaoNum !== undefined) {
             const { error: err2 } = await supabase
@@ -2188,59 +2050,33 @@ export const API = {
               .delete()
               .eq("id_plano", planoId)
               .eq("revisao_numero", revisaoNum);
-            if (err2) console.error("Error deleting revisao by plano/num from Supabase:", err2);
+            if (err2) throw err2;
           }
+          await refreshRevisoesCache();
+          return true;
         } catch (err) {
-          console.warn("Could not delete revisao from Supabase:", err);
+          console.error("Erro ao excluir revisão do Supabase:", err);
+          return false;
         }
-        return true;
       }
     }
   },
 
   veiculos: {
     async listar(): Promise<Veiculo[]> {
-      const saved = localStorage.getItem("gst_veiculos");
-      if (saved) {
-        // Try to update local storage in the background if Supabase is available
+      return deduplicateCall("veiculos", async () => {
         try {
           const { data, error } = await supabase
             .from("veiculos")
             .select("*")
             .order("placa");
-          if (!error && data) {
-            localStorage.setItem("gst_veiculos", JSON.stringify(data));
-            return data;
-          }
-        } catch (e) {
-          console.warn("Supabase fetch error, using local data:", e);
+          if (error) throw error;
+          return data || [];
+        } catch (err) {
+          console.error("Erro ao listar veiculos do Supabase:", err);
+          return [];
         }
-        
-        let list: Veiculo[] = JSON.parse(saved);
-        // Automatically filter out leftover simulated vehicles from the user's browser storage
-        const simulatedPlates = ["HIL-4X12", "LZZ-2002", "FIO-0303", "SAV-0404", "PROPRIO"];
-        const filtered = list.filter(v => !simulatedPlates.includes(v.placa));
-        if (filtered.length !== list.length) {
-          localStorage.setItem("gst_veiculos", JSON.stringify(filtered));
-          list = filtered;
-        }
-        return list;
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("veiculos")
-          .select("*")
-          .order("placa");
-        if (error) throw error;
-        
-        localStorage.setItem("gst_veiculos", JSON.stringify(data || []));
-        return data || [];
-      } catch (err) {
-        console.warn("Falling back to local veiculos...");
-        localStorage.setItem("gst_veiculos", JSON.stringify(INITIAL_VEICULOS));
-        return INITIAL_VEICULOS;
-      }
+      });
     },
 
     async buscar(id: number): Promise<Veiculo | null> {
@@ -2305,37 +2141,19 @@ export const API = {
 
   tiposAtendimento: {
     async listar(): Promise<TipoAtendimento[]> {
-      const saved = localStorage.getItem("gst_tipos_atendimento");
-      if (saved) {
-        // Try to update local storage in the background if Supabase is available
+      return deduplicateCall("tipos_atendimento", async () => {
         try {
           const { data, error } = await supabase
             .from("tipos_atendimento")
             .select("*")
             .order("nome");
-          if (!error && data) {
-            localStorage.setItem("gst_tipos_atendimento", JSON.stringify(data));
-          }
-        } catch (e) {
-          console.warn("Supabase fetch error, using local data:", e);
+          if (error) throw error;
+          return data || [];
+        } catch (err) {
+          console.error("Erro ao listar tipos de atendimento do Supabase:", err);
+          return [];
         }
-        return JSON.parse(saved);
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from("tipos_atendimento")
-          .select("*")
-          .order("nome");
-        if (error) throw error;
-        
-        localStorage.setItem("gst_tipos_atendimento", JSON.stringify(data || []));
-        return data || [];
-      } catch (err) {
-        console.warn("Falling back to local tipos_atendimento...");
-        localStorage.setItem("gst_tipos_atendimento", JSON.stringify(INITIAL_TIPOS_ATENDIMENTO));
-        return INITIAL_TIPOS_ATENDIMENTO;
-      }
+      });
     },
 
     async buscar(id: number): Promise<TipoAtendimento | null> {
@@ -3596,6 +3414,42 @@ export const API = {
         console.warn("Erro ao salvar configuracoes_agenda no Supabase:", err);
         return false;
       }
+    }
+  },
+
+  async limparTodosDadosSistema(): Promise<boolean> {
+    try {
+      await this.ordensServico.excluirTodos();
+      await this.clientes.excluirTodos();
+      await this.implementos.excluirTodos();
+      
+      const keysToRemove = [
+        "gst_ordens_servico",
+        "gst_clientes",
+        "gst_implementos",
+        "gst_apontamentos",
+        "gst_chamados_garantia",
+        "gst_comissoes",
+        "gst_planos",
+        "gst_revisoes",
+        "gst_os_localizacao",
+        "gst_implemento_localizacao"
+      ];
+      for (const k of keysToRemove) {
+        localStorage.removeItem(k);
+      }
+
+      try { await supabase.from("os_apontamentos").delete().neq("id", -999999); } catch {}
+      try { await supabase.from("os_pecas").delete().neq("id", -999999); } catch {}
+      try { await supabase.from("chamados_garantia").delete().neq("id", -999999); } catch {}
+      try { await supabase.from("comissoes").delete().neq("id", -999999); } catch {}
+      try { await supabase.from("planos_manutencao").delete().neq("id", -999999); } catch {}
+      try { await supabase.from("revisoes_plano").delete().neq("id", -999999); } catch {}
+
+      return true;
+    } catch (err) {
+      console.error("Erro ao limpar dados do sistema:", err);
+      return false;
     }
   }
 };

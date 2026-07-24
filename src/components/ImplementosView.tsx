@@ -73,9 +73,9 @@ export const ImplementosView: React.FC<ImplementosViewProps> = ({
   const [planos, setPlanos] = useState<PlanoManutencao[]>([]);
 
   useEffect(() => {
-    const fetchPlanos = () => {
+    const fetchPlanos = async () => {
       try {
-        const list = API.planos.listar();
+        const list = await API.planos.listar();
         setPlanos(list || []);
       } catch (err) {
         console.error("Erro ao carregar planos de manutenção:", err);

@@ -1,18 +1,75 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
+
+// Supabase Server-Side Proxy Endpoint to bypass browser iframe sandbox restrictions
+app.post('/api/supabase-proxy', async (req, res) => {
+  console.log(`[Supabase Proxy] Received request for: ${req.body.url}`);
+  try {
+    const { url, method, headers, body } = req.body;
+
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required.' });
+    }
+
+    const fetchOptions: any = {
+      method: method || 'GET',
+      headers: headers || {},
+    };
+
+    if (body !== undefined && body !== null && method !== 'GET' && method !== 'HEAD') {
+      fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+
+    const response = await fetch(url, fetchOptions);
+
+    const status = response.status;
+    
+    response.headers.forEach((value, key) => {
+      const lowerKey = key.toLowerCase();
+      // Skip framing/compression headers to avoid corruption or mismatches
+      if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(lowerKey)) {
+        res.setHeader(key, value);
+      }
+    });
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    if (!response.ok) {
+      console.error(`[Supabase Proxy Error] HTTP Status: ${status}`);
+      console.error(`[Supabase Proxy Error] URL: ${url}`);
+      try {
+        console.error(`[Supabase Proxy Error] Body: ${buffer.toString('utf-8')}`);
+      } catch (e) {
+        console.error(`[Supabase Proxy Error] Body (non-text):`, buffer);
+      }
+    }
+
+    res.status(status);
+    return res.send(buffer);
+  } catch (error: any) {
+    console.error('--- INICIO DO ERRO NO PROXY SUPABASE ---');
+    console.error('Erro completo:', error);
+    console.error('error.message:', error?.message);
+    console.error('error.stack:', error?.stack);
+    console.error('URL do Supabase utilizada:', req.body?.url);
+    if (error?.response) {
+      console.error('Status da resposta:', error.response.status);
+      console.error('Corpo da resposta:', error.response.body || error.response.data);
+    }
+    console.error('--- FIM DO ERRO ---');
+    return res.status(500).json({ error: error?.message || 'Erro no proxy do Supabase.' });
+  }
+});
 
 // Helper to get GoogleGenAI client
 function getGenAIClient() {
@@ -199,9 +256,10 @@ app.post('/api/generate-image', async (req, res) => {
 
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.join(__dirname, 'dist')));
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
     const { createServer: createViteServer } = await import('vite');

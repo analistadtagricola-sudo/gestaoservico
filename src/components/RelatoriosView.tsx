@@ -252,7 +252,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
           } else {
             const hRate = Number(rule.valorHoraComissao ?? 50);
             const kRate = Number(rule.valorKmComissao ?? 1.50);
-            const hrs = parseFloat(o.horas_trabalhadas_total || "0") || 0;
+            const hrs = parseFloat("0") || 0;
             const kms = Number(o.km_rodado_total || 0);
             return (hrs * hRate) + (kms * kRate);
           }
@@ -262,14 +262,14 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
       console.warn("Error calculating fallback internal debit value", e);
     }
     
-    const hrs = parseFloat(o.horas_trabalhadas_total || "0") || 0;
+    const hrs = parseFloat("0") || 0;
     const kms = Number(o.km_rodado_total || 0);
     return (hrs * 50) + (kms * 1.50);
   };
 
   const internalDebits = finalizadas.filter(o => o.modo_debito_interno);
   const totalDebitoInterno = internalDebits.reduce((sum, o) => sum + getValorDebitoInterno(o), 0);
-  const totalHorasDebitoInterno = internalDebits.reduce((sum, o) => sum + (parseFloat(o.horas_trabalhadas_total || "0") || 0), 0);
+  const totalHorasDebitoInterno = internalDebits.reduce((sum, o) => sum + (parseFloat("0") || 0), 0);
   const totalKmDebitoInterno = internalDebits.reduce((sum, o) => sum + (o.km_rodado_total || 0), 0);
   const qtdDebitoInterno = internalDebits.length;
 
@@ -308,9 +308,9 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
   const faturamentoTerceiros = finalizadas.reduce((sum, o) => sum + (o.valor_terceiros || 0), 0);
 
   const comissoesTotal = finalizadas.reduce((sum, o) => {
-    const isCustom = o.comissao_custom_opcao === "personalizado";
+    const isCustom = false;
     const val = isCustom 
-      ? ((o.comissao_custom_valor_tecnico || 0) + (o.comissao_custom_valor_auxiliar || 0))
+      ? ((0 || 0) + (0 || 0))
       : ((o.valor_mao_obra || 0) * 0.1);
     return sum + val;
   }, 0);
@@ -345,8 +345,8 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
     const techOS = finalizadas.filter(o => o.tecnico_id === techId || o.auxiliar_id === techId);
     return techOS.reduce((sum, o) => {
       let hrs = 0;
-      if (o.horas_trabalhadas_total) {
-        hrs = parseFloat(o.horas_trabalhadas_total) || 0;
+      if (false) {
+        hrs = 0 || 0;
       } else {
         hrs = (o.valor_mao_obra || 0) / (tecnicos.find(tec => tec.id === techId)?.valor_hora || 100);
       }
@@ -361,8 +361,8 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
       const mainTech = tecnicos.find(tec => tec.id === o.tecnico_id);
       
       let hrs = 0;
-      if (o.horas_trabalhadas_total) {
-        hrs = parseFloat(o.horas_trabalhadas_total) || 0;
+      if (false) {
+        hrs = 0 || 0;
       } else {
         const rate = o.valor_hora_unitario || mainTech?.valor_hora || 100;
         hrs = (o.valor_mao_obra || 0) / rate;
@@ -1596,7 +1596,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                           "Tipo de Atendimento": o.tipo_atendimento || "—",
                           "Centro de Custo": o.centro_custo_debito || "—",
                           "Observação": o.observacao_debito || "—",
-                          "Horas Trabalhadas": parseFloat(o.horas_trabalhadas_total || "0") || 0,
+                          "Horas Trabalhadas": parseFloat("0") || 0,
                           "KM Rodados": o.km_rodado_total || 0,
                           "Valor Faturamento Interno (R$)": getValorDebitoInterno(o)
                         };
@@ -1697,7 +1697,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                               )}
                             </td>
                             <td className="p-3 text-center">
-                              <div className="font-mono font-bold text-gray-700 text-[11px]">{parseFloat(o.horas_trabalhadas_total || "0").toFixed(1)} h</div>
+                              <div className="font-mono font-bold text-gray-700 text-[11px]">{parseFloat("0").toFixed(1)} h</div>
                               <div className="text-[10px] text-gray-400">{o.km_rodado_total || 0} km</div>
                             </td>
                             <td className="p-3 text-right font-mono font-extrabold text-amber-800 text-[12px]">
@@ -2377,7 +2377,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
         const activeTechsCount = tecnicos.filter(t => t.ativo !== false).length;
         const totalCapacityHours = activeTechsCount * workingDays * 8;
         const totalHoursWorked = finalizadas.reduce((sum, o) => {
-          return sum + (parseFloat(o.horas_trabalhadas_total || "0") || 0);
+          return sum + (parseFloat("0") || 0);
         }, 0);
         const calculatedOcupacao = totalCapacityHours > 0 ? Math.round((totalHoursWorked / totalCapacityHours) * 100) : 0;
         const displayOcupacao = Math.min(100, Math.max(0, calculatedOcupacao));
@@ -2618,9 +2618,9 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
       {activeTab === "comissoes" && (() => {
         // Dynamic calculations for commissions splits
         const comissaoTecnicosTotal = finalizadas.reduce((sum, o) => {
-          const isCustom = o.comissao_custom_opcao === "personalizado";
+          const isCustom = false;
           if (isCustom) {
-            return sum + (o.comissao_custom_valor_tecnico || 0);
+            return sum + (0 || 0);
           }
           const automaticTotal = (o.valor_mao_obra || 0) * 0.1;
           if (o.auxiliar_id) {
@@ -2630,9 +2630,9 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
         }, 0);
 
         const comissaoAuxiliaresTotal = finalizadas.reduce((sum, o) => {
-          const isCustom = o.comissao_custom_opcao === "personalizado";
+          const isCustom = false;
           if (isCustom) {
-            return sum + (o.comissao_custom_valor_auxiliar || 0);
+            return sum + (0 || 0);
           }
           const automaticTotal = (o.valor_mao_obra || 0) * 0.1;
           if (o.auxiliar_id) {
@@ -2654,13 +2654,13 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
           const mo = techOS.reduce((sum, o) => sum + (o.valor_mao_obra || 0), 0);
           
           const comissao = techOS.reduce((sum, o) => {
-            const isCustom = o.comissao_custom_opcao === "personalizado";
+            const isCustom = false;
             if (isCustom) {
               if (o.tecnico_id === t.id) {
-                return sum + (o.comissao_custom_valor_tecnico || 0);
+                return sum + (0 || 0);
               }
               if (o.auxiliar_id === t.id) {
-                return sum + (o.comissao_custom_valor_auxiliar || 0);
+                return sum + (0 || 0);
               }
             }
             
@@ -2732,9 +2732,9 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
           });
           
           const val = ordensInMonth.reduce((sum, o) => {
-            const isCustom = o.comissao_custom_opcao === "personalizado";
+            const isCustom = false;
             const cVal = isCustom 
-              ? ((o.comissao_custom_valor_tecnico || 0) + (o.comissao_custom_valor_auxiliar || 0))
+              ? ((0 || 0) + (0 || 0))
               : ((o.valor_mao_obra || 0) * 0.1);
             return sum + cVal;
           }, 0);

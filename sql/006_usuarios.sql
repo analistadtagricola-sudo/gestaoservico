@@ -62,10 +62,11 @@ CREATE POLICY "Permitir atualização total em usuarios" ON usuarios FOR UPDATE 
 DROP POLICY IF EXISTS "Permitir exclusão total em usuarios" ON usuarios;
 CREATE POLICY "Permitir exclusão total em usuarios" ON usuarios FOR DELETE USING (true);
 
--- Inserir usuário administrador padrão
+-- Inserir usuário administrador padrão de forma idempotente
 INSERT INTO usuarios (
     id, nome, usuario, email, perfil, ativo, senha, permissoes
-) VALUES (
+) 
+SELECT 
     'usr_1',
     'Administrador (Padrão)',
     'admin',
@@ -74,4 +75,6 @@ INSERT INTO usuarios (
     true,
     '142536',
     '{"dashboard":{"consultar":true,"editar":true,"excluir":true},"clientes":{"consultar":true,"editar":true,"excluir":true},"implementos":{"consultar":true,"editar":true,"excluir":true},"os":{"consultar":true,"editar":true,"excluir":true},"agenda":{"consultar":true,"editar":true,"excluir":true},"financeiro":{"consultar":true,"editar":true,"excluir":true},"configuracoes":{"consultar":true,"editar":true,"excluir":true},"tecnicos":{"consultar":true,"editar":true,"excluir":true},"tipos_atendimento":{"consultar":true,"editar":true,"excluir":true},"comissoes":{"consultar":true,"editar":true,"excluir":true}}'
-) ON CONFLICT (usuario) DO NOTHING;
+WHERE NOT EXISTS (
+    SELECT 1 FROM usuarios WHERE id = 'usr_1' OR usuario = 'admin'
+);

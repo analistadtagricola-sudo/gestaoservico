@@ -88,7 +88,6 @@ export interface OrdemServico {
   servico_executado?: string;
   
   // Financial & finalization details
-  horas_trabalhadas_total?: string;
   km_rodado_total?: number;
   km_inicial?: number;
   km_final?: number;
@@ -107,11 +106,6 @@ export interface OrdemServico {
   localizacao_maquina?: string;
   localizacao?: string;
   revisao_executada?: string;
-
-  // Custom commission overrides for variants of Entrega Técnica / custom values
-  comissao_custom_opcao?: "automatico" | "personalizado";
-  comissao_custom_valor_tecnico?: number;
-  comissao_custom_valor_auxiliar?: number;
 
   // Internal debit database fields
   modo_debito_interno?: boolean;

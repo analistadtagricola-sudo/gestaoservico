@@ -67,9 +67,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   // Calculate real values from database
   const realFaturamento = finalizadas.reduce((sum, o) => sum + (o.valor_total || 0), 0);
   const realComissoes = finalizadas.reduce((sum, o) => {
-    const isCustom = o.comissao_custom_opcao === "personalizado";
+    const isCustom = false;
     const val = isCustom 
-      ? ((o.comissao_custom_valor_tecnico || 0) + (o.comissao_custom_valor_auxiliar || 0))
+      ? ((0 || 0) + (0 || 0))
       : ((o.valor_mao_obra || 0) * 0.1);
     return sum + val;
   }, 0);

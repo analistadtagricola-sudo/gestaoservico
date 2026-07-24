@@ -174,7 +174,6 @@ export const UsuariosView: React.FC = () => {
           senha: senha || (existing ? existing.senha : ""),
           limite_telas: limiteTelas
         };
-        console.log("Saving user:", updatedUser);
         await API.usuarios.atualizar(editingId, updatedUser);
         showToast("Usuário atualizado com sucesso!");
         

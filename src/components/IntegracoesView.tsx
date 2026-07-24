@@ -1204,13 +1204,37 @@ const normalizeKey = (k: string) => k ? String(k).toLowerCase().normalize("NFD")
       )}
 
       {/* Title block */}
-      <div className="flex flex-col gap-1">
-        <h1 className="font-display text-4xl font-extrabold tracking-tight uppercase animate-fade">
-          Administração & Integrações
-        </h1>
-        <p className="text-gray-500 text-sm">
-          Acesso restrito para configuração do sistema, canais externos e importadores inteligentes de cadastros.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-display text-4xl font-extrabold tracking-tight uppercase animate-fade">
+            Administração & Integrações
+          </h1>
+          <p className="text-gray-500 text-sm">
+            Acesso restrito para configuração do sistema, canais externos e importadores inteligentes de cadastros.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            if (window.confirm("ATENÇÃO MÁXIMA: Deseja realmente apagar TODOS os dados fictícios do sistema (clientes, implementos, O.S., apontamentos, etc.) para deixar o ambiente 100% limpo apenas com dados reais de homologação? Esta ação não pode ser desfeita!")) {
+              setImporting(true);
+              try {
+                await API.limparTodosDadosSistema();
+                showToast("Sistema limpo com sucesso! Todos os dados fictícios foram removidos para homologação.", "success");
+                if (onRefresh) await onRefresh();
+              } catch (err) {
+                console.error(err);
+                showToast("Erro ao limpar dados do sistema.", "error");
+              } finally {
+                setImporting(false);
+              }
+            }
+          }}
+          className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold py-2.5 px-4 rounded-xl shadow-md transition-colors shrink-0"
+        >
+          <Trash2 className="w-4 h-4" />
+          Limpar Todos os Dados Fictícios (Homologação)
+        </button>
       </div>
 
       {/* Grid containing import client cards and integration settings */}
@@ -1337,6 +1361,30 @@ const normalizeKey = (k: string) => k ? String(k).toLowerCase().normalize("NFD")
                     >
                       <Trash2 className="w-3.5 h-3.5 text-rose-600" />
                       Limpar Implementos
+                    </button>
+                  )}
+                  {activeImporterTab === "ordens_servico" && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm("ATENÇÃO: Deseja realmente excluir TODAS as ordens de serviço do banco de dados para uma nova importação limpa?")) {
+                          setImporting(true);
+                          try {
+                            await API.ordensServico.excluirTodos();
+                            showToast("Todas as ordens de serviço foram excluídas com sucesso. Banco limpo para nova importação!", "success");
+                            if (onRefresh) await onRefresh();
+                          } catch (err) {
+                            console.error(err);
+                            showToast("Erro ao limpar ordens de serviço do banco.", "error");
+                          } finally {
+                            setImporting(false);
+                          }
+                        }
+                      }}
+                      className="shrink-0 flex items-center gap-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-[10px] font-bold text-rose-700 py-1.5 px-2.5 rounded shadow-sm transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      Limpar O.S.
                     </button>
                   )}
                   <button

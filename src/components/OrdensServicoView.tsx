@@ -150,10 +150,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const [centrosCustoOpcoes, setCentrosCustoOpcoes] = useState<string[]>([]);
 
   // Custom commission overrides states
-  const [comissaoCustomOpcao, setComissaoCustomOpcao] = useState<"automatico" | "personalizado">("automatico");
-  const [comissaoCustomValorTecnico, setComissaoCustomValorTecnico] = useState<number>(0);
-  const [comissaoCustomValorAuxiliar, setComissaoCustomValorAuxiliar] = useState<number>(0);
-
+      
   // Searchable client dropdown states
   const [clienteDropdownOpen, setClienteDropdownOpen] = useState(false);
   const [clienteSearch, setClienteSearch] = useState("");
@@ -170,7 +167,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       }
     };
     loadVeiculosAndTipos();
-  }, [isFormOpen]);
+  }, []);
 
   // Helper for dynamic status calculation
   const getDynamicStatus = (
@@ -407,7 +404,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     setApontamentos([]); // Clear current list first to avoid ghosting
     try {
       const apList = await API.apontamentos.listar(os.id);
-      console.log("Loaded appointments for OS", os.id, ":", apList);
       setApontamentos(apList);
 
       // Restore custom lists for parts from LocalStorage
@@ -479,10 +475,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setLocalizacaoMaquina((rawLocOS && String(rawLocOS).trim().toUpperCase() !== "EMPTY") ? String(rawLocOS).trim() : "");
       setRevisaoExecutada(os.revisao_executada || "");
 
-      setComissaoCustomOpcao(os.comissao_custom_opcao || "automatico");
-      setComissaoCustomValorTecnico(os.comissao_custom_valor_tecnico || 0);
-      setComissaoCustomValorAuxiliar(os.comissao_custom_valor_auxiliar || 0);
-
+                  
       let isInternal = os.modo_debito_interno || 
                         (os.tipo_atendimento || "").toUpperCase().includes("DÉBITO INTERNO") || 
                         (os.tipo_atendimento || "").toUpperCase().includes("GARANTIA") || 
@@ -546,9 +539,9 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       setHorimetroFinal("");
       setLocalizacaoMaquina("");
 
-      setComissaoCustomOpcao("automatico");
-      setComissaoCustomValorTecnico(0);
-      setComissaoCustomValorAuxiliar(0);
+      
+      
+      
       setShowInternalDebitMode(false);
       setApontamentos([]);
       setPecas([]);
@@ -721,17 +714,12 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       num_nota_fiscal: numNotaFiscal,
       data_nota_fiscal: dataNotaFiscal || null,
       valor_total: valTotal,
-      horas_trabalhadas_total: String(calcularTotalHorasTrabalhadas()),
-      horimetro_final: horimetroFinal !== "" ? Number(horimetroFinal) : undefined,
+            horimetro_final: horimetroFinal !== "" ? Number(horimetroFinal) : undefined,
       localizacao_maquina: localizacaoMaquina.trim() || undefined,
       localizacao: localizacaoMaquina.trim() || undefined,
       revisao_executada: revisaoExecutada,
 
-      // Custom commission overrides fields
-      comissao_custom_opcao: comissaoCustomOpcao,
-      comissao_custom_valor_tecnico: Number(comissaoCustomValorTecnico),
-      comissao_custom_valor_auxiliar: Number(comissaoCustomValorAuxiliar),
-
+      
       // Internal debit mode database fields
       modo_debito_interno: showInternalDebitMode,
       classificacao_atendimento_interno: showInternalDebitMode ? (tipoAtendimento || "ASSISTÊNCIA TÉCNICA") : null,
@@ -791,7 +779,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     };
 
     try {
-      console.log("Saving OS with payload:", payload);
       let savedOS: OrdemServico;
       if (currentOS && currentOS.id) {
         savedOS = await API.ordensServico.atualizar(currentOS.id, payload);
@@ -815,7 +802,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         );
       }
       
-      console.log("Saved OS result:", savedOS);
       // Save parts to specific sub key
       if (savedOS.id) {
         localStorage.setItem(`gst_os_pecas_${savedOS.id}`, JSON.stringify(pecas));
@@ -1150,7 +1136,6 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   const handleDeleteApontamento = async (apId: number | string) => {
     setIsLoading(true);
     try {
-      console.log("Handle Delete: Forcing removal of ID:", apId);
       
       // 1. Immediate UI removal (Optimistic Update)
       setApontamentos(prev => prev.filter(a => String(a.id) !== String(apId)));
