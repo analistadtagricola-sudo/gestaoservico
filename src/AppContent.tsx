@@ -27,6 +27,7 @@ import {
 import { API } from "./lib/api";
 import { Cliente, Implemento, Tecnico, OrdemServico } from "./types";
 import { useUser } from "./lib/UserContext";
+import { addAuditLog } from "./lib/auditLogger";
 
 // Import Custom Subviews
 import { DashboardView } from "./components/DashboardView";
@@ -227,6 +228,11 @@ export function AppContent() {
       }
       setActiveTabId(tabId);
     } else {
+      if (currentUser?.limite_telas && currentUser.limite_telas > 0) {
+        if (tabs.length >= currentUser.limite_telas) {
+          return;
+        }
+      }
       const newTab: WorkspaceTab = {
         id: tabId,
         label: tabLabel,
@@ -416,10 +422,9 @@ export function AppContent() {
             </div>
             {!sidebarCollapsed && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="truncate">
-                <h1 className="font-display font-extrabold text-xs uppercase tracking-wider text-white leading-none">
+                <h1 className="font-display font-extrabold text-xs uppercase tracking-wider text-white leading-none py-1">
                   Gestão de Serviços
                 </h1>
-                <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest block mt-0.5">PÓS-VENDA ENTERPRISE</span>
               </motion.div>
             )}
           </div>
@@ -492,7 +497,7 @@ export function AppContent() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Main top header (Sophisticated Dark Navbar) */}
-        <header className="h-16 bg-[#111317] border-b border-[#1c1f26] flex items-center justify-between px-6 z-10 shrink-0 select-none">
+        <header className="h-16 bg-[#111317] border-b border-[#1c1f26] flex items-center justify-between px-6 z-10 shrink-0 select-none relative">
           <div className="flex items-center gap-4 flex-1">
             <button 
               onClick={() => setSidebarOpen(true)}
@@ -510,12 +515,12 @@ export function AppContent() {
               <span className="text-[11px] font-medium grow select-none">Buscar no sistema...</span>
               <span className="text-[9px] font-bold bg-[#282d38] px-1.5 py-0.5 rounded text-gray-400 font-mono tracking-wider">Ctrl+K</span>
             </div>
-            
-            {/* Real-time date display */}
-            <div className="hidden lg:flex items-center gap-2 text-gray-400 text-[11px] font-bold uppercase tracking-wider pl-4 border-l border-[#1c1f26]">
-              <Calendar className="w-3.5 h-3.5 text-brand-red" />
-              <span>{formatBrazilianDate(currentTime)}</span>
-            </div>
+          </div>
+
+          {/* Real-time date display centered */}
+          <div className="hidden lg:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 items-center gap-2 text-gray-400 text-[11px] font-bold uppercase tracking-wider">
+            <Calendar className="w-3.5 h-3.5 text-brand-red" />
+            <span>{formatBrazilianDate(currentTime)}</span>
           </div>
 
           <div className="flex items-center gap-4">
@@ -536,7 +541,11 @@ export function AppContent() {
               <div className="hidden sm:block text-right">
                 <span className="text-xs font-extrabold text-white block">{currentUser?.nome || "Usuário"}</span>
                 <button 
-                  onClick={() => { localStorage.removeItem("gst_current_active_user"); setCurrentUser(null); }}
+                  onClick={() => { 
+                    addAuditLog(currentUser?.nome || currentUser?.usuario, "Autenticação & Segurança", "INFO", "Logout de Usuário", `O usuário ${currentUser?.nome || currentUser?.usuario || ""} encerrou a sessão.`);
+                    localStorage.removeItem("gst_current_active_user"); 
+                    setCurrentUser(null); 
+                  }}
                   className="text-[9px] text-brand-red font-bold uppercase tracking-wide hover:underline"
                 >
                   Logout

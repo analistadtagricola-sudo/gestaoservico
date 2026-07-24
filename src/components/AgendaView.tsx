@@ -228,75 +228,79 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Navigation Controls */}
-          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-xs font-semibold">
-            <button 
-              onClick={() => setCurrentWeekOffset(prev => prev - 1)}
-              className="p-1 hover:bg-gray-100 rounded text-gray-600"
-              title="Semana Anterior"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-xs text-gray-800 font-bold tracking-tight">
-              {formatWeekRangeLabel()}
-            </span>
-            <button 
-              onClick={() => setCurrentWeekOffset(prev => prev + 1)}
-              className="p-1 hover:bg-gray-100 rounded text-gray-600"
-              title="Próxima Semana"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={() => setCurrentWeekOffset(0)}
-              className="text-[10px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded hover:bg-gray-200 font-bold ml-1"
-            >
-              Hoje
-            </button>
+        <div className="flex flex-col sm:items-end gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Navigation Controls */}
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-xs font-semibold">
+              <button 
+                onClick={() => setCurrentWeekOffset(prev => prev - 1)}
+                className="p-1 hover:bg-gray-100 rounded text-gray-600"
+                title="Semana Anterior"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-xs text-gray-800 font-bold tracking-tight">
+                {formatWeekRangeLabel()}
+              </span>
+              <button 
+                onClick={() => setCurrentWeekOffset(prev => prev + 1)}
+                className="p-1 hover:bg-gray-100 rounded text-gray-600"
+                title="Próxima Semana"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => setCurrentWeekOffset(0)}
+                className="text-[10px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded hover:bg-gray-200 font-bold ml-1"
+              >
+                Hoje
+              </button>
+            </div>
+
+            {/* Filter Tech */}
+            <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-xs">
+              <Filter className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                value={selectedTechFilter}
+                onChange={(e) => setSelectedTechFilter(e.target.value)}
+                className="text-xs font-bold text-gray-700 bg-transparent outline-none"
+              >
+                <option value="ALL">Todos os Técnicos</option>
+                {tecnicos.map(t => (
+                  <option key={t.id} value={t.id}>{t.apelido || t.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            <label className="flex items-center gap-1.5 text-xs text-gray-700 font-bold cursor-pointer bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg border border-gray-200 select-none">
+              <input
+                type="checkbox"
+                checked={showFinalizadas}
+                onChange={(e) => setShowFinalizadas(e.target.checked)}
+                className="rounded text-brand-red focus:ring-brand-red w-3.5 h-3.5"
+              />
+              <span>Exibir Finalizadas</span>
+            </label>
           </div>
 
-          {/* Filter Tech */}
-          <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-xs">
-            <Filter className="w-3.5 h-3.5 text-gray-400" />
-            <select
-              value={selectedTechFilter}
-              onChange={(e) => setSelectedTechFilter(e.target.value)}
-              className="text-xs font-bold text-gray-700 bg-transparent outline-none"
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => onNavigate("config_agenda")}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-gray-800 text-white rounded-lg text-xs font-bold hover:bg-gray-900 transition-colors shadow-xs"
             >
-              <option value="ALL">Todos os Técnicos</option>
-              {tecnicos.map(t => (
-                <option key={t.id} value={t.id}>{t.apelido || t.nome}</option>
-              ))}
-            </select>
+              <Settings className="w-3.5 h-3.5" />
+              <span>Configurar Agenda</span>
+            </button>
+
+            <button
+              onClick={handleSyncToGoogle}
+              disabled={isSyncing}
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-bold transition-colors shadow-xs ${isSyncing ? 'bg-blue-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700'}`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? "Sincronizando..." : (needsAuth ? "Conectar Google Agenda" : "Sincronizar Google Agenda")}</span>
+            </button>
           </div>
-
-          <label className="flex items-center gap-1.5 text-xs text-gray-700 font-bold cursor-pointer bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg border border-gray-200 select-none">
-            <input
-              type="checkbox"
-              checked={showFinalizadas}
-              onChange={(e) => setShowFinalizadas(e.target.checked)}
-              className="rounded text-brand-red focus:ring-brand-red w-3.5 h-3.5"
-            />
-            <span>Exibir Finalizadas</span>
-          </label>
-
-          <button
-            onClick={() => onNavigate("config_agenda")}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 text-white rounded-lg text-xs font-bold hover:bg-gray-900 transition-colors shadow-xs"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span>Configurar Agenda</span>
-          </button>
-
-          <button
-            onClick={handleSyncToGoogle}
-            disabled={isSyncing}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-white rounded-lg text-xs font-bold transition-colors shadow-xs ${isSyncing ? 'bg-blue-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700'}`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? "Sincronizando..." : (needsAuth ? "Conectar Google Agenda" : "Sincronizar Google Agenda")}</span>
-          </button>
         </div>
       </div>
 

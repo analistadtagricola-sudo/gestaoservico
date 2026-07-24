@@ -20,7 +20,8 @@ import {
   ShieldAlert,
   Activity,
   Briefcase,
-  ListFilter
+  ListFilter,
+  ShieldCheck
 } from "lucide-react";
 import { Cliente, Implemento, OrdemServico, Tecnico } from "../types";
 import { getRevisionAlerts } from "../lib/revisionAlerts";
@@ -73,6 +74,84 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const overdueCount = revisionAlerts.filter(a => a.status === "ATRASADA").length;
   const upcomingCount = revisionAlerts.filter(a => a.status === "PROXIMA").length;
 
+  // Calculate fleet warranty statistics for alert banner
+  const allRevisoesList = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("gst_revisoes") || "[]") : [];
+  const planosList = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("gst_planos") || "[]") : [];
+  const planosMap = new Map<string, any>(planosList.map((p: any) => [p.id, p]));
+
+  let vigentesCount = 0;
+  let expirandoCount = 0;
+  let expiradasCount = 0;
+  let perdidasCount = 0;
+
+  implementos.forEach((impl) => {
+    const plano = impl.plano_id ? planosMap.get(impl.plano_id) : undefined;
+    const garantiaMeses = plano?.garantia_meses || 12;
+
+    const dataEntrega = impl.data_entrega || null;
+    let diasRestantes: number | null = null;
+
+    if (dataEntrega) {
+      const entregaDate = new Date(dataEntrega);
+      if (!isNaN(entregaDate.getTime())) {
+        const expDate = new Date(entregaDate);
+        expDate.setMonth(expDate.getMonth() + garantiaMeses);
+        const today = new Date();
+        const diffMs = expDate.getTime() - today.getTime();
+        diasRestantes = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      }
+    }
+
+    const relatedOS = ordens.filter(o => o.implemento_id === impl.id);
+    const osMaxH = relatedOS.reduce((max, o) => Math.max(max, Number(o.horimetro_final) || Number(o.horimetro) || 0), 0);
+    const horimetroAtual = Math.max(Number(impl.horimetro_atual) || 0, osMaxH);
+
+    let horimetroLimite = 2000;
+    if (plano) {
+      const planRevs = allRevisoesList.filter((r: any) => r.id_plano === plano.id);
+      if (planRevs.length > 0) {
+        horimetroLimite = Math.max(...planRevs.map((r: any) => r.horas_limite));
+      }
+    }
+
+    const horasRestantes = horimetroLimite - horimetroAtual;
+
+    const finishedOS = relatedOS.filter(o => o.status === "FINALIZADA");
+    let revisoesPendentesCount = 0;
+
+    if (plano) {
+      const planRevs = allRevisoesList.filter((r: any) => r.id_plano === plano.id);
+      for (const rev of planRevs) {
+        if (horimetroAtual >= rev.horas_limite) {
+          const finished = finishedOS.some(o => {
+            const hFinal = Number(o.horimetro_final) || Number(o.horimetro) || 0;
+            const desc = (o.reclamacao || o.observacao || "").toLowerCase();
+            return hFinal >= (rev.horas_limite - 50) || desc.includes(`revisão de ${rev.horas_limite}`) || desc.includes(`revisao ${rev.horas_limite}h`);
+          });
+          if (!finished) {
+            revisoesPendentesCount++;
+          }
+        }
+      }
+    }
+
+    let status = "VIGENTE";
+    if (revisoesPendentesCount > 0 && horimetroAtual > 1000) {
+      status = "PERDIDA_SEM_REVISAO";
+    } else if (diasRestantes !== null && diasRestantes < 0) {
+      status = "EXPIRADA";
+    } else if (horasRestantes < 0) {
+      status = "EXPIRADA";
+    } else if ((diasRestantes !== null && diasRestantes <= 30) || horasRestantes <= 100) {
+      status = "EXPIRANDO";
+    }
+
+    if (status === "VIGENTE") vigentesCount++;
+    else if (status === "EXPIRANDO") expirandoCount++;
+    else if (status === "EXPIRADA") expiradasCount++;
+    else if (status === "PERDIDA_SEM_REVISAO") perdidasCount++;
+  });
+
   const containerVariants = {
     hidden: { opacity: 0 },
     show: {
@@ -113,7 +192,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <motion.div 
           variants={itemVariants}
           onClick={() => onNavigate("clientes")}
-          className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
+          className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
         >
           <div className="absolute top-0 left-0 right-0 h-[4px] bg-sky-500" />
           <div className="flex justify-between items-start">
@@ -140,7 +219,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <motion.div 
           variants={itemVariants}
           onClick={() => onNavigate("implementos")}
-          className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
+          className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
         >
           <div className="absolute top-0 left-0 right-0 h-[4px] bg-amber-500" />
           <div className="flex justify-between items-start">
@@ -167,7 +246,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <motion.div 
           variants={itemVariants}
           onClick={() => onNavigate("tecnicos")}
-          className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
+          className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
         >
           <div className="absolute top-0 left-0 right-0 h-[4px] bg-indigo-500" />
           <div className="flex justify-between items-start">
@@ -194,7 +273,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <motion.div 
           variants={itemVariants}
           onClick={() => onNavigate("comissoes")}
-          className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
+          className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-gray-300 transition-all cursor-pointer relative overflow-hidden group"
         >
           <div className="absolute top-0 left-0 right-0 h-[4px] bg-emerald-500" />
           <div className="flex justify-between items-start">
@@ -229,7 +308,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <motion.div
             variants={itemVariants}
             onClick={() => onNavigate("os", undefined, { status: "ABERTA" })}
-            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-amber-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+            className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-amber-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
           >
             <div className="absolute top-0 left-0 right-0 h-[3px] bg-amber-500" />
             <div className="flex justify-between items-start">
@@ -250,7 +329,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <motion.div
             variants={itemVariants}
             onClick={() => onNavigate("os", undefined, { status: "AGENDADA" })}
-            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-orange-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+            className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-orange-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
           >
             <div className="absolute top-0 left-0 right-0 h-[3px] bg-orange-500" />
             <div className="flex justify-between items-start">
@@ -271,7 +350,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <motion.div
             variants={itemVariants}
             onClick={() => onNavigate("os", undefined, { status: "EM ATENDIMENTO" })}
-            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-blue-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+            className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-blue-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
           >
             <div className="absolute top-0 left-0 right-0 h-[3px] bg-blue-500" />
             <div className="flex justify-between items-start">
@@ -288,15 +367,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </motion.div>
 
-          {/* Card: Aguardando Peças */}
+          {/* Card: Aguardando Finalização */}
           <motion.div
             variants={itemVariants}
             onClick={() => onNavigate("os", undefined, { status: "AGUARDANDO" })}
-            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-purple-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+            className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-purple-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
           >
             <div className="absolute top-0 left-0 right-0 h-[3px] bg-purple-500" />
             <div className="flex justify-between items-start">
-              <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">Aguardando Peças</span>
+              <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">Aguardando Finalização</span>
               <div className="p-2 bg-purple-50 text-purple-600 rounded-xl group-hover:bg-purple-500 group-hover:text-white transition-colors duration-300">
                 <AlertTriangle className="w-4 h-4" />
               </div>
@@ -305,7 +384,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <h2 className="text-3xl font-extrabold font-display text-brand-ink leading-none">
                 {osAguardando}
               </h2>
-              <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase tracking-wide">Pendente de peças</p>
+              <p className="text-[10px] text-gray-400 font-bold mt-2 uppercase tracking-wide">Pendente de finalização</p>
             </div>
           </motion.div>
 
@@ -313,7 +392,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <motion.div
             variants={itemVariants}
             onClick={() => onNavigate("os", undefined, { status: "FINALIZADA" })}
-            className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
+            className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between min-h-[140px]"
           >
             <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
             <div className="flex justify-between items-start">
@@ -335,7 +414,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Main Grid: Latest Orders & Quick Shortcuts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Latest Orders */}
-        <div className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs lg:col-span-2">
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs lg:col-span-2">
           <div className="flex justify-between items-start border-b border-gray-100 pb-4 mb-4">
             <div>
               <h3 className="font-display font-extrabold text-lg uppercase text-brand-ink">
@@ -359,7 +438,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ) : (
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-gray-150 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  <tr className="border-b border-gray-200 text-[10px] font-black text-gray-400 uppercase tracking-widest">
                     <th className="pb-3 w-20">O.S.</th>
                     <th className="pb-3">Cliente</th>
                     <th className="pb-3">Equipamento</th>
@@ -408,7 +487,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Quick Operations Guide & System Info */}
-        <div className="bg-white rounded-2xl border border-gray-150 p-5 shadow-xs flex flex-col justify-between">
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-xs flex flex-col justify-between">
           <div>
             <div className="border-b border-gray-100 pb-4 mb-4">
               <h3 className="font-display font-extrabold text-lg uppercase text-brand-ink">
@@ -420,7 +499,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="space-y-2.5">
               <button 
                 onClick={() => onNavigate("os", 0)}
-                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-150 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
+                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
               >
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-rose-50 text-rose-600 rounded-lg group-hover:bg-rose-100">
@@ -436,7 +515,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               <button 
                 onClick={() => onNavigate("implementos")}
-                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-150 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
+                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
               >
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-amber-50 text-amber-600 rounded-lg group-hover:bg-amber-100">
@@ -452,7 +531,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               <button 
                 onClick={() => onNavigate("planos")}
-                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-150 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
+                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
               >
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-purple-50 text-purple-600 rounded-lg group-hover:bg-purple-100">
@@ -468,7 +547,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               <button 
                 onClick={() => onNavigate("comissoes")}
-                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-150 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
+                className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-rose-50/10 text-left transition-all duration-250 group"
               >
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg group-hover:bg-emerald-100">
@@ -485,6 +564,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Fleet Warranty Alert Banner */}
+      <motion.div 
+        variants={itemVariants}
+        className={`rounded-2xl p-4 border relative overflow-hidden flex items-center justify-between gap-4 text-xs font-medium ${
+          perdidasCount > 0 
+            ? "border-rose-200 bg-rose-50/40 text-rose-950" 
+            : expirandoCount > 0 
+              ? "border-amber-200 bg-amber-50/30 text-amber-950" 
+              : "border-emerald-200 bg-emerald-50/20 text-emerald-950"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          {perdidasCount > 0 || expirandoCount > 0 ? (
+            <ShieldAlert className={`w-5 h-5 shrink-0 ${perdidasCount > 0 ? "text-rose-600" : "text-amber-600"}`} />
+          ) : (
+            <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+          )}
+          <span>
+            <strong className={`font-extrabold uppercase ${
+              perdidasCount > 0 
+                ? "text-rose-900" 
+                : expirandoCount > 0 
+                  ? "text-amber-950" 
+                  : "text-emerald-900"
+            }`}>
+              Garantias e Cobertura da Frota:
+            </strong>{" "}
+            {perdidasCount > 0 ? (
+              "Há equipamentos monitorados que perderam a garantia de fábrica devido à falta de revisões preventivas obrigatórias dentro do limite previsto."
+            ) : expirandoCount > 0 ? (
+              "Há equipamentos com garantia de fábrica expirando nos próximos 30 dias ou menos de 100 horas de uso. Realize o acompanhamento."
+            ) : (
+              "Todas as máquinas com cobertura de garantia ativa estão em conformidade."
+            )}
+          </span>
+        </div>
+        <button
+          onClick={() => onNavigate("garantias")}
+          className={`text-xs font-bold uppercase tracking-wider shrink-0 transition-all hover:underline ${
+            perdidasCount > 0 
+              ? "text-rose-700" 
+              : expirandoCount > 0 
+                ? "text-amber-800" 
+                : "text-emerald-700"
+          }`}
+        >
+          Gerenciar Garantias
+        </button>
+      </motion.div>
 
       {/* Alert Banner Widget: Revisões Preventivas Pendentes / Próximas */}
       {revisionAlerts.length > 0 ? (

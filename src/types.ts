@@ -222,6 +222,7 @@ export interface Usuario {
   ultimo_acesso?: string;
   foto?: string;
   senha: string;
+  limite_telas?: number;
 }
 
 export interface Veiculo {

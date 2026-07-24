@@ -254,24 +254,27 @@ export const ComissoesView: React.FC<ComissoesViewProps> = ({
             valorAuxiliar: 0
           }));
         } else if (parsed.regrasAtendimento && parsed.regrasAtendimento.length > 0) {
-          config.regrasAtendimento = parsed.regrasAtendimento.map((r: any) => ({
-            ...r,
-            baseCalculo: r.baseCalculo
-          }));
-        } else {
-          config.regrasAtendimento = [
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLAINA", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - GRADES", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - INOCULADOR/MONITORAMENTO", baseCalculo: "fixo", valorTecnico: 200, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - KUHN (SEM ASSISTENCIA FABRICA)", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - JORGE MAQ. (SEM ASSISTENCIA FABRICA)", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES", baseCalculo: "fixo", valorTecnico: 500, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MANUTENÇÃO CORRETIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "MANUTENÇÃO PREVENTIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-            { tipo: "GARANTIA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+          const mockRuleTypes = [
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLAINA",
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - GRADES",
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - INOCULADOR/MONITORAMENTO",
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - KUHN (SEM ASSISTENCIA FABRICA)",
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - JORGE MAQ. (SEM ASSISTENCIA FABRICA)",
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS",
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES",
+            "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA",
+            "MANUTENÇÃO CORRETIVA",
+            "MANUTENÇÃO PREVENTIVA",
+            "GARANTIA"
           ];
+          config.regrasAtendimento = parsed.regrasAtendimento
+            .filter((r: any) => !mockRuleTypes.some(m => m.toLowerCase().trim() === (r.tipo || "").toLowerCase().trim()))
+            .map((r: any) => ({
+              ...r,
+              baseCalculo: r.baseCalculo
+            }));
+        } else {
+          config.regrasAtendimento = [];
         }
       } catch (e) {
         // ignore

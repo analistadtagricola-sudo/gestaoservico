@@ -42,6 +42,8 @@ import {
 import { OrdemServico, Cliente, Implemento, Tecnico, Apontamento, Veiculo, TipoAtendimento } from "../types";
 import { API } from "../lib/api";
 import { formatOSNotificationText } from "../lib/googleAuth";
+import { useUser } from "../lib/UserContext";
+import { addAuditLog } from "../lib/auditLogger";
 
 interface OrdensServicoViewProps {
   ordens: OrdemServico[];
@@ -75,6 +77,7 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
   preSelectedStatus,
   onClearPreSelectedOS
 }) => {
+  const { currentUser } = useUser();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("TODAS");
   const [selectedTech, setSelectedTech] = useState("");
@@ -793,9 +796,23 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       if (currentOS && currentOS.id) {
         savedOS = await API.ordensServico.atualizar(currentOS.id, payload);
         showToast("Ordem de Serviço salva com sucesso!", "success");
+        addAuditLog(
+          currentUser?.nome || currentUser?.usuario,
+          "Ordens de Serviço",
+          "SUCESSO",
+          "Atualização de O.S.",
+          `A Ordem de Serviço ${savedOS.numero_os} foi atualizada com sucesso.`
+        );
       } else {
         savedOS = await API.ordensServico.inserir(payload);
         showToast("Ordem de Serviço criada com sucesso!", "success");
+        addAuditLog(
+          currentUser?.nome || currentUser?.usuario,
+          "Ordens de Serviço",
+          "SUCESSO",
+          "Abertura de O.S.",
+          `A Ordem de Serviço ${savedOS.numero_os || "nova"} foi criada com sucesso.`
+        );
       }
       
       console.log("Saved OS result:", savedOS);
@@ -1021,6 +1038,13 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         
         setApontamentos(prev => prev.map(a => a.id === editingApontId ? result : a));
         showToast("Apontamento atualizado com sucesso!");
+        addAuditLog(
+          currentUser?.nome || currentUser?.usuario,
+          "Ordens de Serviço",
+          "INFO",
+          "Atualização de Apontamento",
+          `Apontamento de horas atualizado com sucesso na Ordem de Serviço ${activeOS?.numero_os || "N/A"}.`
+        );
         setEditingApontId(null);
       } else {
         // INSERT MODE
@@ -1065,6 +1089,13 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
         });
 
         showToast("Apontamento registrado com sucesso!");
+        addAuditLog(
+          currentUser?.nome || currentUser?.usuario,
+          "Ordens de Serviço",
+          "INFO",
+          "Registro de Apontamento",
+          `Novo apontamento de horas registrado com sucesso na Ordem de Serviço ${activeOS?.numero_os || "N/A"}.`
+        );
       }
       
       // Reset inputs
@@ -1129,6 +1160,13 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
       
       if (success) {
         showToast("Apontamento removido.");
+        addAuditLog(
+          currentUser?.nome || currentUser?.usuario,
+          "Ordens de Serviço",
+          "INFO",
+          "Exclusão de Apontamento",
+          `Um apontamento de horas da Ordem de Serviço ${currentOS?.numero_os || "N/A"} foi excluído com sucesso.`
+        );
         // We wait a bit before refreshing from server to allow DB consistency
         setTimeout(async () => {
           if (currentOS?.id) {
@@ -1157,6 +1195,13 @@ export const OrdensServicoView: React.FC<OrdensServicoViewProps> = ({
     try {
       await API.ordensServico.excluir(osId);
       showToast(`Ordem de Serviço ${numeroOS} excluída com sucesso!`, "success");
+      addAuditLog(
+        currentUser?.nome || currentUser?.usuario,
+        "Ordens de Serviço",
+        "SUCESSO",
+        "Exclusão de O.S.",
+        `A Ordem de Serviço ${numeroOS} foi excluída com sucesso.`
+      );
       await onRefresh();
     } catch (err) {
       console.error(err);

@@ -45,6 +45,7 @@ export interface Usuario {
   ultimo_acesso?: string;
   foto?: string;
   senha: string;
+  limite_telas?: number;
 }
 
 const DEFAULT_PERMISSIONS: Permissions = {
@@ -101,6 +102,7 @@ export const UsuariosView: React.FC = () => {
   const [permissoes, setPermissoes] = useState<Permissions>(DEFAULT_PERMISSIONS);
   const [foto, setFoto] = useState("");
   const [senha, setSenha] = useState("");
+  const [limiteTelas, setLimiteTelas] = useState<number>(0);
 
   const [toast, setToast] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
@@ -169,7 +171,8 @@ export const UsuariosView: React.FC = () => {
           permissoes,
           ultimo_acesso: existing?.ultimo_acesso && existing.ultimo_acesso !== "Nunca" ? existing.ultimo_acesso : "Hoje, 10:30",
           foto,
-          senha: senha || (existing ? existing.senha : "")
+          senha: senha || (existing ? existing.senha : ""),
+          limite_telas: limiteTelas
         };
         console.log("Saving user:", updatedUser);
         await API.usuarios.atualizar(editingId, updatedUser);
@@ -190,7 +193,8 @@ export const UsuariosView: React.FC = () => {
           permissoes,
           ultimo_acesso: "Hoje, 10:45",
           foto,
-          senha
+          senha,
+          limite_telas: limiteTelas
         };
         await API.usuarios.inserir(newUsr);
         showToast("Novo operador cadastrado!");
@@ -220,6 +224,7 @@ export const UsuariosView: React.FC = () => {
       });
       setFoto(usr.foto || "");
       setSenha("");
+      setLimiteTelas(usr.limite_telas ?? 0);
     } else {
       setEditingId(null);
       setNome("");
@@ -230,6 +235,7 @@ export const UsuariosView: React.FC = () => {
       setPermissoes(DEFAULT_PERMISSIONS);
       setFoto("");
       setSenha("");
+      setLimiteTelas(0);
     }
     setIsFormOpen(true);
   };
@@ -322,6 +328,7 @@ export const UsuariosView: React.FC = () => {
                 <th className="px-6 py-4">Usuário</th>
                 <th className="px-6 py-4">E-mail</th>
                 <th className="px-6 py-4">Função / Perfil</th>
+                <th className="px-6 py-4 text-center">Lmt. Telas</th>
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Último Acesso</th>
                 <th className="px-6 py-4">Permissões (Módulos)</th>
@@ -388,6 +395,17 @@ export const UsuariosView: React.FC = () => {
                         <span className="px-2 py-1 rounded text-[10px] font-extrabold font-mono tracking-wide bg-gray-100 text-gray-800">
                           {usr.perfil}
                         </span>
+                      </td>
+
+                      {/* Limit of screens */}
+                      <td className="px-6 py-4 text-center font-bold">
+                        {usr.limite_telas && usr.limite_telas > 0 ? (
+                          <span className="bg-amber-50 text-amber-800 px-2.5 py-1 rounded-md text-[10px] font-mono border border-amber-200">
+                            {usr.limite_telas} telas
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-[11px] font-mono">Ilimitado</span>
+                        )}
                       </td>
 
                       {/* Status */}
@@ -506,6 +524,19 @@ export const UsuariosView: React.FC = () => {
                   <select value={perfil} onChange={(e) => setPerfil(e.target.value as any)} className="col-span-2 border rounded-lg p-2 text-sm">
                     {["ADMINISTRADOR", "GERENTE", "FATURISTA", "TECNICO"].map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
+                  <div className="col-span-2 space-y-1">
+                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide block">
+                      Limite de Telas Abertas (0 para Ilimitado)
+                    </label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      placeholder="Ex: 5"
+                      value={limiteTelas === 0 ? "" : limiteTelas} 
+                      onChange={(e) => setLimiteTelas(Math.max(0, parseInt(e.target.value) || 0))} 
+                      className="w-full border rounded-lg p-2 text-sm" 
+                    />
+                  </div>
                 </div>
                 
                 {/* Permissions Matrix */}

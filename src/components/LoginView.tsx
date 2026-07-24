@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { User, Lock, ArrowRight } from "lucide-react";
 import { PRESET_USUARIOS } from "./UsuariosView";
+import { addAuditLog } from "../lib/auditLogger";
 
 interface LoginViewProps {
   onLogin: (user: any) => void;
@@ -36,6 +37,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
     
     if (user) {
       localStorage.setItem("gst_current_active_user", JSON.stringify(user));
+      addAuditLog(user.nome || user.usuario, "Autenticação & Segurança", "SUCESSO", "Login de Usuário", `O usuário ${user.nome || user.usuario} iniciou sessão com sucesso.`);
       onLogin(user);
     } else {
       setError("Usuário ou senha incorretos ou usuário inativo.");

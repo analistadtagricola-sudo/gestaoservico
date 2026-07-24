@@ -74,86 +74,92 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return sum + val;
   }, 0);
 
-  // Helper to get real values if data exists, otherwise beautiful matching screenshot defaults
-  const useReal = ordens.length > 0;
-  
-  const totalOSCount = useReal ? filteredOrdens.length : 247;
-  const finalizadasCount = useReal ? finalizadas.length : 198;
-  const emAndamentoCount = useReal ? emAndamento.length : 32;
-  const aguardandoPecasCount = useReal ? aguardandoPecas.length : 10;
-  const chamadosGarantiaCount = useReal ? chamadosGarantia.length : 24;
-  const faturamentoTotal = useReal ? realFaturamento : 324590.00;
-  const comissoesTotal = useReal ? realComissoes : 18540.00;
+  const totalOSCount = filteredOrdens.length;
+  const finalizadasCount = finalizadas.length;
+  const emAndamentoCount = emAndamento.length;
+  const aguardandoPecasCount = aguardandoPecas.length;
+  const chamadosGarantiaCount = chamadosGarantia.length;
+  const faturamentoTotal = realFaturamento;
+  const comissoesTotal = realComissoes;
 
   // Percentage calculations
-  const pctConclusao = totalOSCount > 0 ? (finalizadasCount / totalOSCount) * 100 : 80.2;
-  const pctEmAndamento = totalOSCount > 0 ? (emAndamentoCount / totalOSCount) * 100 : 13.0;
-  const pctAguardandoPecas = totalOSCount > 0 ? (aguardandoPecasCount / totalOSCount) * 100 : 4.0;
-  const pctCanceladas = totalOSCount > 0 ? (canceladas.length / totalOSCount) * 100 : 2.8;
+  const pctConclusao = totalOSCount > 0 ? (finalizadasCount / totalOSCount) * 100 : 0;
+  const pctEmAndamento = totalOSCount > 0 ? (emAndamentoCount / totalOSCount) * 100 : 0;
+  const pctAguardandoPecas = totalOSCount > 0 ? (aguardandoPecasCount / totalOSCount) * 100 : 0;
+  const pctCanceladas = totalOSCount > 0 ? (canceladas.length / totalOSCount) * 100 : 0;
 
-  // Real or screenshot-based Monthly OS trend data
-  const monthlyData = [
-    { month: "Jan", abertas: 189, finalizadas: 165, faturamento: 210000 },
-    { month: "Fev", abertas: 201, finalizadas: 176, faturamento: 238000 },
-    { month: "Mar", abertas: 220, finalizadas: 189, faturamento: 256000 },
-    { month: "Abr", abertas: 210, finalizadas: 182, faturamento: 275000 },
-    { month: "Mai", abertas: 236, finalizadas: 201, faturamento: 298000 },
-    { month: "Jun", abertas: 242, finalizadas: 208, faturamento: 312000 },
-    { month: "Jul", abertas: totalOSCount, finalizadas: finalizadasCount, faturamento: faturamentoTotal }
-  ];
-
-  // Real or screenshot-based technician ranking (finished OS)
-  const getTechRanking = () => {
-    if (useReal) {
-      const map: Record<number, { name: string; count: number }> = {};
-      tecnicos.forEach(t => {
-        map[t.id!] = { name: t.apelido || t.nome, count: 0 };
+  // Generate last 6 months dynamically from actual database data
+  const getMonthlyData = () => {
+    const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    const result: { month: string; abertas: number; finalizadas: number; faturamento: number }[] = [];
+    
+    const d = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const targetMonth = new Date(d.getFullYear(), d.getMonth() - i, 1);
+      const mIdx = targetMonth.getMonth();
+      const year = targetMonth.getFullYear();
+      const label = `${months[mIdx]}/${String(year).substring(2)}`;
+      
+      const ordensInMonth = ordens.filter(o => {
+        const dateStr = o.data_atendimento || o.data_abertura || (o.created_at ? o.created_at.substring(0, 10) : "");
+        if (!dateStr) return false;
+        const oDate = new Date(dateStr + "T00:00:00");
+        return oDate.getMonth() === mIdx && oDate.getFullYear() === year;
       });
-      finalizadas.forEach(o => {
-        if (o.tecnico_id && map[o.tecnico_id]) {
-          map[o.tecnico_id].count++;
-        }
+      
+      const abertas = ordensInMonth.length;
+      const finalizadasInMonth = ordensInMonth.filter(o => o.status === "FINALIZADA").length;
+      const faturamento = ordensInMonth
+        .filter(o => o.status === "FINALIZADA")
+        .reduce((sum, o) => sum + (o.valor_total || 0), 0);
+        
+      result.push({
+        month: label,
+        abertas,
+        finalizadas: finalizadasInMonth,
+        faturamento
       });
-      return Object.entries(map)
-        .map(([id, item]) => ({ id: Number(id), name: item.name, count: item.count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5);
     }
-    return [
-      { id: 1, name: "Jefferson", count: 52 },
-      { id: 2, name: "Shelton", count: 47 },
-      { id: 3, name: "Lucas", count: 38 },
-      { id: 4, name: "Mayk", count: 29 },
-      { id: 5, name: "Auxiliares", count: 19 }
-    ];
+    return result;
+  };
+
+  const monthlyData = getMonthlyData();
+  const maxFaturamento = Math.max(...monthlyData.map(d => d.faturamento), 0);
+
+  // Real technician ranking (finished OS)
+  const getTechRanking = () => {
+    const map: Record<number, { name: string; count: number }> = {};
+    tecnicos.forEach(t => {
+      map[t.id!] = { name: t.apelido || t.nome, count: 0 };
+    });
+    finalizadas.forEach(o => {
+      if (o.tecnico_id && map[o.tecnico_id]) {
+        map[o.tecnico_id].count++;
+      }
+    });
+    return Object.entries(map)
+      .map(([id, item]) => ({ id: Number(id), name: item.name, count: item.count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
   };
 
   const techRanking = getTechRanking();
 
-  // Real or screenshot-based client ranking
+  // Real client ranking
   const getClientRanking = () => {
-    if (useReal) {
-      const map: Record<number, { name: string; total: number }> = {};
-      clientes.forEach(c => {
-        map[c.id!] = { name: c.nome_fantasia || c.razao_social, total: 0 };
-      });
-      finalizadas.forEach(o => {
-        if (o.cliente_id && map[o.cliente_id]) {
-          map[o.cliente_id].total += (o.valor_total || 0);
-        }
-      });
-      return Object.entries(map)
-        .map(([id, item]) => ({ id: Number(id), name: item.name, total: item.total }))
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 5);
-    }
-    return [
-      { id: 1, name: "Fazenda Boa Esperança", total: 45800.00 },
-      { id: 2, name: "Agro Santa Luzia", total: 38250.00 },
-      { id: 3, name: "Sítio São Pedro", total: 29400.00 },
-      { id: 4, name: "Fazenda Tropical", total: 27900.00 },
-      { id: 5, name: "Agro Nova Geração", total: 24600.00 }
-    ];
+    const map: Record<number, { name: string; total: number }> = {};
+    clientes.forEach(c => {
+      map[c.id!] = { name: c.nome_fantasia || c.razao_social, total: 0 };
+    });
+    finalizadas.forEach(o => {
+      if (o.cliente_id && map[o.cliente_id]) {
+        map[o.cliente_id].total += (o.valor_total || 0);
+      }
+    });
+    return Object.entries(map)
+      .map(([id, item]) => ({ id: Number(id), name: item.name, total: item.total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
   };
 
   const clientRanking = getClientRanking();
@@ -163,7 +169,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       {/* 7 KPI Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
         {/* Card 1: OS no Período */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        <div className="bg-white rounded-xl border border-gray-300 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-sky-500" />
           <div className="flex justify-between items-start">
             <div>
@@ -175,13 +181,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-1 mt-2 text-[9px] font-bold">
-            <span className="text-emerald-600">▲ +12,5%</span>
-            <span className="text-gray-400 uppercase">vs. mês anterior</span>
+            <span className="text-sky-600 uppercase">Período selecionado</span>
           </div>
         </div>
 
         {/* Card 2: Finalizadas */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        <div className="bg-white rounded-xl border border-gray-300 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
           <div className="flex justify-between items-start">
             <div>
@@ -199,7 +204,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         {/* Card 3: Em Andamento */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        <div className="bg-white rounded-xl border border-gray-300 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-amber-500" />
           <div className="flex justify-between items-start">
             <div>
@@ -216,12 +221,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
         </div>
 
-        {/* Card 4: Aguardando Peças */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        {/* Card 4: Aguardando Finalização */}
+        <div className="bg-white rounded-xl border border-gray-300 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-orange-500" />
           <div className="flex justify-between items-start">
             <div>
-              <span className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider block">Aguardando Peças</span>
+              <span className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider block">Aguardando Finalização</span>
               <h2 className="text-2xl font-extrabold font-display text-brand-ink mt-2">{aguardandoPecasCount}</h2>
             </div>
             <div className="p-1.5 bg-orange-50 text-orange-600 rounded">
@@ -235,7 +240,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         {/* Card 5: Chamados Garantia */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        <div className="bg-white rounded-xl border border-gray-300 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-indigo-500" />
           <div className="flex justify-between items-start">
             <div>
@@ -247,13 +252,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-1 mt-2 text-[9px] font-bold">
-            <span className="text-emerald-600">▲ +8,3%</span>
-            <span className="text-gray-400 uppercase">vs. mês anterior</span>
+            <span className="text-indigo-600 uppercase">Atendimentos em garantia</span>
           </div>
         </div>
 
         {/* Card 6: Faturamento Pós-Venda */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        <div className="bg-white rounded-xl border border-gray-300 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-600" />
           <div className="flex justify-between items-start">
             <div>
@@ -267,13 +271,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-1 mt-2 text-[9px] font-bold">
-            <span className="text-emerald-600">▲ +15,6%</span>
-            <span className="text-gray-400 uppercase">vs. mês anterior</span>
+            <span className="text-emerald-600 uppercase">Serviços e mão de obra</span>
           </div>
         </div>
 
         {/* Card 7: Comissões */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        <div className="bg-white rounded-xl border border-gray-300 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-[3px] bg-pink-500" />
           <div className="flex justify-between items-start">
             <div>
@@ -287,8 +290,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-1 mt-2 text-[9px] font-bold">
-            <span className="text-emerald-600">▲ +14,2%</span>
-            <span className="text-gray-400 uppercase">vs. mês anterior</span>
+            <span className="text-pink-600 uppercase">Comissões de técnicos</span>
           </div>
         </div>
       </div>
@@ -321,15 +323,27 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <div className="relative h-48 flex items-end justify-between px-2 pt-6">
             {/* Gridlines */}
             <div className="absolute inset-x-0 top-6 bottom-0 flex flex-col justify-between pointer-events-none border-b border-gray-100">
-              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono"><span></span><span>R$ 350 mil</span></div>
-              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono"><span></span><span>R$ 250 mil</span></div>
-              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono"><span></span><span>R$ 150 mil</span></div>
-              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono"><span></span><span>R$ 50 mil</span></div>
+              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono">
+                <span></span>
+                <span>{maxFaturamento > 0 ? `R$ ${(maxFaturamento / 1000).toFixed(0)} mil` : "R$ 10 mil"}</span>
+              </div>
+              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono">
+                <span></span>
+                <span>{maxFaturamento > 0 ? `R$ ${((maxFaturamento * 0.66) / 1000).toFixed(0)} mil` : "R$ 5 mil"}</span>
+              </div>
+              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono">
+                <span></span>
+                <span>{maxFaturamento > 0 ? `R$ ${((maxFaturamento * 0.33) / 1000).toFixed(0)} mil` : "R$ 2 mil"}</span>
+              </div>
+              <div className="w-full border-t border-gray-100 flex justify-between text-[8px] text-gray-300 font-mono">
+                <span></span>
+                <span>R$ 0</span>
+              </div>
             </div>
 
             {/* Monthly bars */}
             {monthlyData.map(item => {
-              const maxVal = 260; // scale limit for bars
+              const maxVal = Math.max(...monthlyData.map(d => Math.max(d.abertas, d.finalizadas, 1)), 5);
               const pctAbertas = (item.abertas / maxVal) * 100;
               const pctFinalizadas = (item.finalizadas / maxVal) * 100;
 
@@ -411,7 +425,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 <span>{pctEmAndamento.toFixed(1)}%</span>
               </div>
               <div className="flex justify-between items-center text-sky-600">
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 bg-sky-200 rounded-full"></span>Peças</span>
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 bg-sky-200 rounded-full"></span>Ag. Finalização</span>
                 <span>{pctAguardandoPecas.toFixed(1)}%</span>
               </div>
               <div className="flex justify-between items-center text-gray-500">

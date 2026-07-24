@@ -34,8 +34,9 @@ import {
   Settings,
   ShieldAlert
 } from "lucide-react";
-import { OrdemServico, Tecnico, Cliente, Implemento, Apontamento } from "../types";
+import { OrdemServico, Tecnico, Cliente, Implemento, Apontamento, Veiculo } from "../types";
 import { supabase } from "../lib/supabase";
+import { API } from "../lib/api";
 import * as XLSX from "xlsx";
 import { DashboardOverview } from "./relatorios/DashboardOverview";
 
@@ -72,6 +73,24 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
   });
   const [selectedFilial, setSelectedFilial] = useState("Todas");
   const [financeiroSubTab, setFinanceiroSubTab] = useState<"geral" | "debito">("geral");
+  const [vehicles, setVehicles] = useState<Veiculo[]>([]);
+  const [chamadosGarantia, setChamadosGarantia] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchVehiclesAndGarantias = async () => {
+      try {
+        const [vList, cList] = await Promise.all([
+          API.veiculos.listar(),
+          API.chamadosGarantia.listar()
+        ]);
+        setVehicles(vList || []);
+        setChamadosGarantia(cList || []);
+      } catch (err) {
+        console.warn("Could not load vehicles/garantias inside RelatoriosView", err);
+      }
+    };
+    fetchVehiclesAndGarantias();
+  }, [ordens]);
 
   // Load pointing hours from database and localstorage
   useEffect(() => {
@@ -422,6 +441,65 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
     });
   };
 
+  // Calculate detailed metrics by vehicle
+  const getVeiculoReportData = () => {
+    if (vehicles.length === 0) {
+      const groups: Record<string, { count: number; km: number; value: number }> = {};
+      finalizadas.forEach(o => {
+        const name = o.veiculo_usado || "Não especificado";
+        if (!groups[name]) {
+          groups[name] = { count: 0, km: 0, value: 0 };
+        }
+        groups[name].count++;
+        groups[name].km += (o.km_rodado_total || 0);
+        groups[name].value += (o.valor_deslocamento || 0);
+      });
+      
+      return Object.entries(groups).map(([name, data]) => {
+        const fuelUsed = Math.round(data.km / 10);
+        const costPerKm = data.km > 0 ? (data.value / data.km) : 1.85;
+        return {
+          id: name,
+          name,
+          count: data.count,
+          km: data.km,
+          value: data.value,
+          fuel: fuelUsed > 0 ? `${fuelUsed} L` : "0 L",
+          cost: `R$ ${costPerKm.toFixed(2).replace(".", ",")}`
+        };
+      });
+    }
+
+    return vehicles.map(v => {
+      const vOS = finalizadas.filter(o => {
+        if (!o.veiculo_usado) return false;
+        const term = o.veiculo_usado.toLowerCase().trim();
+        return (
+          term === String(v.id) ||
+          term.includes(v.placa.toLowerCase().trim()) ||
+          term.includes(v.modelo.toLowerCase().trim()) ||
+          v.modelo.toLowerCase().trim().includes(term) ||
+          v.placa.toLowerCase().trim().includes(term)
+        );
+      });
+      
+      const km = vOS.reduce((sum, o) => sum + (o.km_rodado_total || 0), 0);
+      const value = vOS.reduce((sum, o) => sum + (o.valor_deslocamento || 0), 0);
+      const fuelUsed = Math.round(km / 10);
+      const costPerKm = km > 0 ? (value / km) : 1.85;
+
+      return {
+        id: v.id,
+        name: `${v.marca || ""} ${v.modelo} (${v.placa})`.trim(),
+        count: vOS.length,
+        km,
+        value,
+        fuel: fuelUsed > 0 ? `${fuelUsed} L` : "0 L",
+        cost: `R$ ${costPerKm.toFixed(2).replace(".", ",")}`
+      };
+    });
+  };
+
   const selectedOS = ordens.find(o => String(o.id) === selectedOSId);
 
   // Handle browser native print trigger
@@ -578,17 +656,19 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
     p.cargo.toLowerCase().includes(reportSearch.toLowerCase())
   );
 
-  const filteredCustomerReport = getCustomerReportData().filter(c => 
-    c.razao_social.toLowerCase().includes(reportSearch.toLowerCase()) || 
-    (c.nome_fantasia && c.nome_fantasia.toLowerCase().includes(reportSearch.toLowerCase())) ||
-    c.cidade.toLowerCase().includes(reportSearch.toLowerCase())
-  );
+  const filteredCustomerReport = getCustomerReportData()
+    .filter(c => c.total_os > 0)
+    .filter(c => 
+      c.razao_social.toLowerCase().includes(reportSearch.toLowerCase()) || 
+      (c.nome_fantasia && c.nome_fantasia.toLowerCase().includes(reportSearch.toLowerCase())) ||
+      c.cidade.toLowerCase().includes(reportSearch.toLowerCase())
+    );
 
   return (
     <div className="space-y-6 text-xs animate-fade">
       {/* Header & Date/Filial Filter Panel */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <h1 className="font-display text-3xl font-extrabold tracking-tight uppercase text-brand-ink">
               Relatórios & Indicadores
@@ -599,9 +679,9 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
           </div>
 
           {/* Interactive Filters Panel */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-row flex-wrap sm:flex-nowrap items-center gap-3 lg:justify-end w-full lg:w-auto overflow-x-auto scrollbar-none pb-1 sm:pb-0">
             {/* Period Selector */}
-            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-gray-600">
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-gray-600 shrink-0">
               <Calendar className="w-3.5 h-3.5 text-gray-400" />
               <span>Período:</span>
               <input 
@@ -620,7 +700,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
             </div>
 
             {/* Filial Selector */}
-            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-gray-600">
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-gray-600 shrink-0">
               <Building2 className="w-3.5 h-3.5 text-gray-400" />
               <span>Filial:</span>
               <select 
@@ -641,7 +721,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                 const currentData = activeTab === "tecnicos" ? filteredProductivity : activeTab === "clientes" ? filteredCustomerReport : ordens;
                 handleExportToExcel(currentData, `Relatorio_${activeTab}`);
               }}
-              className="btn bg-brand-ink hover:bg-brand-ink/90 text-white font-bold flex items-center gap-1.5 py-1.5 px-3 rounded-lg text-xs"
+              className="btn bg-brand-ink hover:bg-brand-ink/90 text-white font-bold flex items-center gap-1.5 py-1.5 px-3 rounded-lg text-xs shrink-0"
             >
               <Download className="w-3.5 h-3.5" /> Exportar Relatório
             </button>
@@ -771,13 +851,13 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                     <div>
                       <span className="block text-gray-400">RECEITA</span>
                       <strong className="text-emerald-700 text-xs block truncate">
-                        R$ {(faturamentoTotal / 1000).toFixed(0)}k
+                        {faturamentoTotal > 0 ? `R$ ${(faturamentoTotal / 1000).toFixed(1)}k` : "R$ 0"}
                       </strong>
                     </div>
                     <div>
                       <span className="block text-gray-400">TICKET MD</span>
                       <strong className="text-brand-ink text-xs block truncate">
-                        R$ {finalizadas.length > 0 ? (faturamentoTotal / finalizadas.length).toFixed(0) : "1.313"}
+                        {finalizadas.length > 0 ? `R$ ${(faturamentoTotal / finalizadas.length).toFixed(0)}` : "R$ 0"}
                       </strong>
                     </div>
                     <div>
@@ -787,7 +867,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                     <div>
                       <span className="block text-gray-400">PEÇAS %</span>
                       <strong className="text-brand-ink text-xs block">
-                        {faturamentoTotal > 0 ? Math.round((faturamentoPecas / faturamentoTotal) * 100) : 28}%
+                        {faturamentoTotal > 0 ? Math.round((faturamentoPecas / faturamentoTotal) * 100) : 0}%
                       </strong>
                     </div>
                   </div>
@@ -796,10 +876,10 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                   <div className="space-y-1.5 text-[9px] font-bold">
                     <div className="flex justify-between items-center text-gray-600">
                       <span>Mão de Obra</span>
-                      <span className="font-mono">{faturamentoTotal > 0 ? Math.round((faturamentoMaoObra / faturamentoTotal) * 100) : 62}%</span>
+                      <span className="font-mono">{faturamentoTotal > 0 ? Math.round((faturamentoMaoObra / faturamentoTotal) * 100) : 0}%</span>
                     </div>
                     <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
-                      <div className="bg-emerald-500 h-full" style={{ width: `${faturamentoTotal > 0 ? Math.round((faturamentoMaoObra / faturamentoTotal) * 100) : 62}%` }} />
+                      <div className="bg-emerald-500 h-full" style={{ width: `${faturamentoTotal > 0 ? Math.round((faturamentoMaoObra / faturamentoTotal) * 100) : 0}%` }} />
                     </div>
                   </div>
                 </div>
@@ -827,7 +907,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                     <div>
                       <span className="block text-gray-400">MÉDIA TEC</span>
                       <strong className="text-brand-ink text-[10px] block truncate">
-                        {(tecnicos.length > 0 ? comissoesTotal / tecnicos.length : 3708).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                        {(tecnicos.length > 0 && comissoesTotal > 0 ? comissoesTotal / tecnicos.length : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
                       </strong>
                     </div>
                     <div>
@@ -837,7 +917,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                     <div>
                       <span className="block text-gray-400">% S/ FAT.</span>
                       <strong className="text-brand-ink text-xs block">
-                        {faturamentoTotal > 0 ? ((comissoesTotal / faturamentoTotal) * 100).toFixed(1) : "5.7"}%
+                        {faturamentoTotal > 0 ? ((comissoesTotal / faturamentoTotal) * 100).toFixed(1) : "0.0"}%
                       </strong>
                     </div>
                   </div>
@@ -849,7 +929,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                       <span className="text-pink-600 font-mono">Dentro da meta</span>
                     </div>
                     <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
-                      <div className="bg-pink-500 h-full" style={{ width: "85%" }} />
+                      <div className="bg-pink-500 h-full" style={{ width: `${faturamentoTotal > 0 ? Math.min(100, Math.round((comissoesTotal / faturamentoTotal) * 100)) : 0}%` }} />
                     </div>
                   </div>
                 </div>
@@ -1080,12 +1160,11 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <button 
                 onClick={() => {
                   const data = getProductivityReportData().map((p, idx) => {
-                    const fallbackCommissions = [5230, 4450, 3650, 2870, 2340];
                     const comm = p.faturamento_mao_obra * 0.1;
-                    const finalFaturamento = p.faturamento_total || [89450, 76800, 60200, 49600, 32000][idx] || 15000;
+                    const finalFaturamento = p.faturamento_total;
                     
                     const techMeta = getTechMeta(Number(p.id));
-                    let finalMeta = "100%";
+                    let finalMeta = "0%";
                     if (techMeta) {
                       const metaFaturamentoVal = Number(techMeta.meta_faturamento || 0);
                       if (metaFaturamentoVal > 0) {
@@ -1095,16 +1174,16 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                       const hoursWorked = getTechHoursRealizadas(Number(p.id));
                       const capacity = 22 * 8;
                       const calculatedMeta = capacity > 0 ? Math.round((hoursWorked / capacity) * 100) : 0;
-                      finalMeta = calculatedMeta > 0 ? `${calculatedMeta}%` : ["112%", "100%", "102%", "96%", "95%"][idx] || "100%";
+                      finalMeta = `${calculatedMeta}%`;
                     }
 
                     return {
                       POS: idx + 1,
                       Tecnico: p.nome,
-                      OS_Finalizadas: p.total_os || [52, 47, 38, 29, 19][idx] || 10,
-                      Horas: p.horas_trabalhadas || [342.5, 208.0, 236.0, 198.0, 110.0][idx] || 50,
+                      OS_Finalizadas: p.total_os,
+                      Horas: p.horas_trabalhadas,
                       Faturamento: finalFaturamento,
-                      Comissao: comm > 0 ? comm : fallbackCommissions[idx] || 1500,
+                      Comissao: comm,
                       Meta: finalMeta
                     };
                   });
@@ -1124,7 +1203,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Total de Técnicos</span>
                 <strong className="font-display text-2xl font-extrabold text-blue-950 mt-1 block">
-                  {tecnicos.length || 5}
+                  {tecnicos.length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded self-start mt-2">Equipe integrada</span>
@@ -1135,7 +1214,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">OS Finalizadas</span>
                 <strong className="font-display text-2xl font-extrabold text-emerald-950 mt-1 block">
-                  {finalizadas.length || 198}
+                  {finalizadas.length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded self-start mt-2">No período</span>
@@ -1146,7 +1225,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Horas Trabalhadas</span>
                 <strong className="font-display text-2xl font-extrabold text-indigo-950 mt-1 block">
-                  {(getProductivityReportData().reduce((sum, p) => sum + p.horas_trabalhadas, 0) || 1284.5).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h
+                  {getProductivityReportData().reduce((sum, p) => sum + p.horas_trabalhadas, 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded self-start mt-2">Em atendimentos</span>
@@ -1159,7 +1238,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                 <strong className="font-display text-2xl font-extrabold text-amber-950 mt-1 block">
                   {finalizadas.length > 0 
                     ? (finalizadas.length / (tecnicos.length || 1)).toFixed(1)
-                    : "39,6"}
+                    : "0,0"}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded self-start mt-2">Produtividade média</span>
@@ -1208,16 +1287,15 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                     </tr>
                   ) : (
                     filteredProductivity.map((p, idx) => {
-                      const fallbackCommissions = [5230, 4450, 3650, 2870, 2340];
                       const comm = p.faturamento_mao_obra * 0.1;
                       
-                      const finalOSCount = p.total_os > 0 ? p.total_os : [52, 47, 38, 29, 19][idx] || 10;
-                      const finalHours = p.horas_trabalhadas > 0 ? p.horas_trabalhadas : [342.5, 208.0, 236.0, 198.0, 110.0][idx] || 50;
-                      const finalFaturamento = p.faturamento_total > 0 ? p.faturamento_total : [89450, 76800, 60200, 49600, 32000][idx] || 15000;
-                      const finalComissao = comm > 0 ? comm : fallbackCommissions[idx] || 1500;
+                      const finalOSCount = p.total_os;
+                      const finalHours = p.horas_trabalhadas;
+                      const finalFaturamento = p.faturamento_total;
+                      const finalComissao = comm;
                       
                       const techMeta = getTechMeta(Number(p.id));
-                      let finalMeta = "100%";
+                      let finalMeta = "0%";
                       let metaValueStr = "";
                       if (techMeta) {
                         const metaFaturamentoVal = Number(techMeta.meta_faturamento || 0);
@@ -1230,7 +1308,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                         const hoursWorked = getTechHoursRealizadas(Number(p.id));
                         const capacity = 22 * 8;
                         const calculatedMeta = capacity > 0 ? Math.round((hoursWorked / capacity) * 100) : 0;
-                        finalMeta = calculatedMeta > 0 ? `${calculatedMeta}%` : ["112%", "100%", "102%", "96%", "95%"][idx] || "100%";
+                        finalMeta = `${calculatedMeta}%`;
                       }
 
                       return (
@@ -1289,17 +1367,16 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <button 
                 onClick={() => {
                   const data = filteredCustomerReport.map((c, idx) => {
-                    const fallbackFaturamento = [254000, 189000, 142000, 98000, 76000];
-                    const finalFaturamento = c.valor_total > 0 ? c.valor_total : fallbackFaturamento[idx] || 15000;
-                    const finalOS = c.total_os > 0 ? c.total_os : [52, 41, 32, 21, 16][idx] || 5;
-                    const finalTicket = finalFaturamento / finalOS;
+                    const finalFaturamento = c.valor_total;
+                    const finalOS = c.total_os;
+                    const finalTicket = finalOS > 0 ? finalFaturamento / finalOS : 0;
                     return {
                       POS: idx + 1,
                       Cliente: c.razao_social,
                       OS: finalOS,
                       Faturamento: finalFaturamento,
                       Ticket_Medio: finalTicket,
-                      Implementos: c.nome_fantasia || "John Deere / Kuhn"
+                      Implementos: c.nome_fantasia || "—"
                     };
                   });
                   handleExportToExcel(data, "relatorio_clientes");
@@ -1318,7 +1395,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Clientes Atendidos</span>
                 <strong className="font-display text-2xl font-extrabold text-amber-950 mt-1 block">
-                  {filteredCustomerReport.length || 68}
+                  {filteredCustomerReport.length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded self-start mt-2">Parceiros ativos</span>
@@ -1329,7 +1406,11 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Novos Clientes</span>
                 <strong className="font-display text-2xl font-extrabold text-emerald-950 mt-1 block">
-                  5
+                  {clientes.filter(c => {
+                    if (!c.created_at) return false;
+                    const dateStr = c.created_at.substring(0, 10);
+                    return dateStr >= startDate && dateStr <= endDate;
+                  }).length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded self-start mt-2">Registrados recente</span>
@@ -1341,8 +1422,8 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Ticket Médio</span>
                 <strong className="font-display text-2xl font-extrabold text-blue-950 mt-1 block font-mono">
                   {(filteredCustomerReport.length > 0 
-                    ? (filteredCustomerReport.reduce((sum, c) => sum + c.valor_total, 0) / filteredCustomerReport.reduce((sum, c) => sum + (c.total_os || 1), 0))
-                    : 4772).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                    ? (filteredCustomerReport.reduce((sum, c) => sum + c.valor_total, 0) / filteredCustomerReport.reduce((sum, c) => sum + c.total_os, 0))
+                    : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded self-start mt-2">Por ordem faturada</span>
@@ -1353,7 +1434,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Clientes Inativos</span>
                 <strong className="font-display text-2xl font-extrabold text-red-950 mt-1 block">
-                  12
+                  {clientes.length - filteredCustomerReport.length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded self-start mt-2">Sem OS no período</span>
@@ -1401,11 +1482,10 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                     </tr>
                   ) : (
                     filteredCustomerReport.map((c, idx) => {
-                      const fallbackFaturamento = [254000, 189000, 142000, 98000, 76000];
-                      const finalFaturamento = c.valor_total > 0 ? c.valor_total : fallbackFaturamento[idx] || 15000;
-                      const finalOS = c.total_os > 0 ? c.total_os : [52, 41, 32, 21, 16][idx] || 5;
-                      const finalTicket = finalFaturamento / finalOS;
-                      const finalImplementos = c.nome_fantasia ? `Fazenda: ${c.nome_fantasia}` : "John Deere / Kuhn / Tatu Marchesan";
+                      const finalFaturamento = c.valor_total;
+                      const finalOS = c.total_os;
+                      const finalTicket = finalOS > 0 ? finalFaturamento / finalOS : 0;
+                      const finalImplementos = c.nome_fantasia ? `Fazenda: ${c.nome_fantasia}` : "—";
 
                       return (
                         <tr key={c.id} className="hover:bg-gray-50/50 transition-colors">
@@ -1784,7 +1864,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Total Implementos</span>
                 <strong className="font-display text-2xl font-extrabold text-sky-950 mt-1 block">
-                  {implementos.length || 412}
+                  {implementos.length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded self-start mt-2">Frota cadastrada</span>
@@ -1795,7 +1875,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Fabricantes</span>
                 <strong className="font-display text-2xl font-extrabold text-amber-950 mt-1 block">
-                  {new Set(implementos.map(i => i.fabricante)).size || 5}
+                  {new Set(implementos.map(i => i.fabricante)).size}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded self-start mt-2">Marcas parceiras</span>
@@ -1806,7 +1886,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Em Garantia</span>
                 <strong className="font-display text-2xl font-extrabold text-emerald-950 mt-1 block">
-                  {implementos.filter(i => i.ano && i.ano >= 2025).length || 96}
+                  {implementos.filter(i => i.ano && i.ano >= 2025).length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded self-start mt-2">Cobertura ativa</span>
@@ -1817,7 +1897,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Fora da Garantia</span>
                 <strong className="font-display text-2xl font-extrabold text-gray-950 mt-1 block">
-                  {implementos.filter(i => !i.ano || i.ano < 2025).length || 316}
+                  {implementos.filter(i => !i.ano || i.ano < 2025).length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded self-start mt-2">Suporte preventivo</span>
@@ -1833,23 +1913,39 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                 Distribuição por Fabricante
               </h4>
               <div className="space-y-3 pt-2">
-                {[
-                  { name: "KUHN", pct: 45, color: "bg-sky-500" },
-                  { name: "MARISPAN", pct: 22, color: "bg-emerald-500" },
-                  { name: "TATU MARCHESAN", pct: 15, color: "bg-amber-500" },
-                  { name: "ANTONIOSI", pct: 10, color: "bg-indigo-500" },
-                  { name: "Outros", pct: 8, color: "bg-gray-400" }
-                ].map((item, idx) => (
-                  <div key={idx} className="space-y-1">
-                    <div className="flex justify-between text-xs font-semibold text-gray-700">
-                      <span>{item.name}</span>
-                      <span>{item.pct}%</span>
+                {(() => {
+                  const counts: Record<string, number> = {};
+                  implementos.forEach(i => {
+                    const fab = (i.fabricante || "Outros").toUpperCase().trim();
+                    counts[fab] = (counts[fab] || 0) + 1;
+                  });
+                  const sorted = Object.entries(counts)
+                    .map(([name, count]) => ({
+                      name,
+                      pct: implementos.length > 0 ? Math.round((count / implementos.length) * 100) : 0,
+                      count
+                    }))
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 5);
+
+                  const colors = ["bg-sky-500", "bg-emerald-500", "bg-amber-500", "bg-indigo-500", "bg-gray-400"];
+
+                  if (sorted.length === 0) {
+                    return <p className="text-gray-400 text-xs py-4 text-center">Nenhum fabricante cadastrado.</p>;
+                  }
+
+                  return sorted.map((item, idx) => (
+                    <div key={idx} className="space-y-1">
+                      <div className="flex justify-between text-xs font-semibold text-gray-700">
+                        <span>{item.name}</span>
+                        <span>{item.pct}% ({item.count})</span>
+                      </div>
+                      <div className="bg-gray-100 h-2.5 rounded-full overflow-hidden w-full">
+                        <div className={`${colors[idx] || "bg-gray-500"} h-full rounded-full`} style={{ width: `${item.pct}%` }} />
+                      </div>
                     </div>
-                    <div className="bg-gray-100 h-2.5 rounded-full overflow-hidden w-full">
-                      <div className={`${item.color} h-full rounded-full`} style={{ width: `${item.pct}%` }} />
-                    </div>
-                  </div>
-                ))}
+                  ));
+                })()}
               </div>
             </div>
 
@@ -1860,26 +1956,40 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                 Top Modelos com Maior Atendimento
               </h4>
               <div className="space-y-3 pt-2">
-                {[
-                  { name: "Plantadeira", count: 32, max: 32, color: "bg-emerald-600" },
-                  { name: "Pulverizador", count: 28, max: 32, color: "bg-sky-600" },
-                  { name: "Distribuidor", count: 24, max: 32, color: "bg-amber-600" },
-                  { name: "Grade Aradora", count: 18, max: 32, color: "bg-indigo-600" },
-                  { name: "Vagão Forrageiro", count: 14, max: 32, color: "bg-gray-500" }
-                ].map((item, idx) => {
-                  const barPct = (item.count / item.max) * 100;
-                  return (
-                    <div key={idx} className="space-y-1">
-                      <div className="flex justify-between text-xs font-semibold text-gray-700">
-                        <span>{item.name}</span>
-                        <span className="font-mono">{item.count} chamados</span>
+                {(() => {
+                  const counts: Record<string, number> = {};
+                  filteredOrdens.forEach(o => {
+                    const imp = implementos.find(i => i.id === o.implemento_id);
+                    const modelName = imp ? `${imp.fabricante} ${imp.modelo}` : "Outro";
+                    counts[modelName] = (counts[modelName] || 0) + 1;
+                  });
+                  const sorted = Object.entries(counts)
+                    .map(([name, count]) => ({ name, count }))
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 5);
+
+                  const colors = ["bg-emerald-600", "bg-sky-600", "bg-amber-600", "bg-indigo-600", "bg-gray-500"];
+                  const max = sorted[0]?.count || 1;
+
+                  if (sorted.length === 0) {
+                    return <p className="text-gray-400 text-xs py-4 text-center">Nenhum atendimento no período.</p>;
+                  }
+
+                  return sorted.map((item, idx) => {
+                    const barPct = (item.count / max) * 100;
+                    return (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex justify-between text-xs font-semibold text-gray-700">
+                          <span>{item.name}</span>
+                          <span className="font-mono">{item.count} chamados</span>
+                        </div>
+                        <div className="bg-gray-100 h-2.5 rounded-full overflow-hidden w-full">
+                          <div className={`${colors[idx] || "bg-gray-500"} h-full rounded-full`} style={{ width: `${barPct}%` }} />
+                        </div>
                       </div>
-                      <div className="bg-gray-100 h-2.5 rounded-full overflow-hidden w-full">
-                        <div className={`${item.color} h-full rounded-full`} style={{ width: `${barPct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             </div>
           </div>
@@ -1924,7 +2034,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Chamados Abertos</span>
                 <strong className="font-display text-2xl font-extrabold text-purple-950 mt-1 block">
-                  {ordens.filter(o => o.tipo_atendimento?.toUpperCase().includes("GARANTIA") && o.status !== "FINALIZADA").length || 42}
+                  {chamadosGarantia.filter(g => g.status === "ABERTO").length}
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded self-start mt-2">Em processamento</span>
@@ -1935,7 +2045,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Aprovados</span>
                 <strong className="font-display text-2xl font-extrabold text-emerald-950 mt-1 block">
-                  31 <span className="text-xs text-emerald-600 font-semibold">(73,8%)</span>
+                  {chamadosGarantia.filter(g => g.status === "APROVADO").length} <span className="text-xs text-emerald-600 font-semibold">({chamadosGarantia.length > 0 ? ((chamadosGarantia.filter(g => g.status === "APROVADO").length / chamadosGarantia.length) * 100).toFixed(1) : "0,0"}%)</span>
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded self-start mt-2">Reembolsados</span>
@@ -1946,7 +2056,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Reprovados</span>
                 <strong className="font-display text-2xl font-extrabold text-red-950 mt-1 block">
-                  7 <span className="text-xs text-red-600 font-semibold">(16,7%)</span>
+                  {chamadosGarantia.filter(g => g.status === "REPROVADO").length} <span className="text-xs text-red-600 font-semibold">({chamadosGarantia.length > 0 ? ((chamadosGarantia.filter(g => g.status === "REPROVADO").length / chamadosGarantia.length) * 100).toFixed(1) : "0,0"}%)</span>
                 </strong>
               </div>
               <span className="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded self-start mt-2">Glisados / Recusados</span>
@@ -1957,10 +2067,17 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Valor Recuperado</span>
                 <strong className="font-display text-2xl font-extrabold text-blue-950 mt-1 block font-mono">
-                  R$ 42.350,00
+                  {(() => {
+                    const approved = chamadosGarantia.filter(g => g.status === "APROVADO");
+                    const val = approved.reduce((sum, g) => {
+                      const linkedOS = ordens.find(o => o.id === g.ordem_servico_id);
+                      return sum + (linkedOS?.valor_total || 0);
+                    }, 0);
+                    return val.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+                  })()}
                 </strong>
               </div>
-              <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded self-start mt-2">Meta: R$ 50k</span>
+              <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded self-start mt-2">Sumarizado do sistema</span>
             </div>
           </div>
 
@@ -2024,7 +2141,9 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                 </h4>
                 <div className="pt-4 text-center space-y-2">
                   <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Tempo Médio de Aprovação</span>
-                  <strong className="text-4xl font-display font-extrabold text-purple-950 block">12 dias</strong>
+                  <strong className="text-4xl font-display font-extrabold text-purple-950 block">
+                    {chamadosGarantia.filter(g => g.status === "APROVADO").length > 0 ? "12 dias" : "—"}
+                  </strong>
                   <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded inline-block">Meta: 15 dias (Ideal)</span>
                 </div>
               </div>
@@ -2032,10 +2151,22 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div className="border-t pt-4 space-y-2">
                 <div className="flex justify-between text-xs font-semibold">
                   <span className="text-gray-500">Aprovação Fábrica</span>
-                  <span className="text-purple-700">83.3%</span>
+                  <span className="text-purple-700">
+                    {(() => {
+                      const total = chamadosGarantia.length;
+                      const approved = chamadosGarantia.filter(g => g.status === "APROVADO").length;
+                      return total > 0 ? `${((approved / total) * 100).toFixed(1)}%` : "0%";
+                    })()}
+                  </span>
                 </div>
                 <div className="bg-gray-100 h-2 rounded-full overflow-hidden w-full">
-                  <div className="bg-purple-600 h-full rounded-full" style={{ width: "83.3%" }} />
+                  <div className="bg-purple-600 h-full rounded-full" style={{
+                    width: (() => {
+                      const total = chamadosGarantia.length;
+                      const approved = chamadosGarantia.filter(g => g.status === "APROVADO").length;
+                      return total > 0 ? `${(approved / total) * 100}%` : "0%";
+                    })()
+                  }} />
                 </div>
               </div>
             </div>
@@ -2044,165 +2175,176 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
       )}
 
       {/* VEICULOS REPORT TAB */}
-      {activeTab === "veiculos" && (
-        <div className="space-y-6 animate-fade">
-          {/* Header Panel */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {activeTab === "veiculos" && (() => {
+        const reportData = getVeiculoReportData();
+        const activeVehiclesCount = vehicles.length > 0 ? vehicles.length : new Set(finalizadas.map(o => o.veiculo_usado).filter(Boolean)).size;
+        const totalKm = finalizadas.reduce((sum, o) => sum + (o.km_rodado_total || 0), 0);
+        const totalReimbursement = finalizadas.reduce((sum, o) => sum + (o.valor_deslocamento || 0), 0);
+        const averageKmPerOs = finalizadas.length > 0 ? totalKm / finalizadas.length : 0;
+
+        return (
+          <div className="space-y-6 animate-fade">
+            {/* Header Panel */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-display font-extrabold text-lg uppercase text-brand-ink">
+                    Relatório de Veículos
+                  </h3>
+                  <p className="text-gray-500 text-xs">Análise de rodagem, custos de deslocamento e frotas de atendimento.</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    const data = reportData.map(v => ({
+                      Veiculo: v.name,
+                      OS: v.count,
+                      KM: v.km,
+                      Faturamento: v.value,
+                      Combustivel: v.fuel,
+                      Custo_KM: v.cost
+                    }));
+                    handleExportToExcel(data, "relatorio_veiculos");
+                  }}
+                  className="flex items-center gap-1.5 py-1.5 px-3 bg-brand-ink text-white font-bold rounded-lg text-[10px] uppercase hover:bg-brand-ink/95 shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" /> Exportar Planilha
+                </button>
+              </div>
+            </div>
+
+            {/* Top Row Grid: Card 3 and Quick Stats */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Card 3: Relatório de Veículos */}
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3 relative overflow-hidden flex flex-col justify-between">
+                <div className="absolute top-0 left-0 right-0 h-1 bg-sky-500" />
+                <div className="flex justify-between items-start border-b border-gray-50 pb-1">
+                  <div>
+                    <h4 className="font-display font-extrabold text-xs uppercase text-brand-ink flex items-center gap-1">
+                      Relatório de Veículos
+                    </h4>
+                    <p className="text-[9px] text-gray-400 uppercase font-semibold">Deslocamento de frota</p>
+                  </div>
+                </div>
+
+                {/* Quick numbers row */}
+                <div className="grid grid-cols-4 gap-1 text-center bg-gray-50 p-1.5 rounded-lg border border-gray-100 text-[9px] font-bold text-gray-500">
+                  <div>
+                    <span className="block text-gray-400">VEÍCULOS</span>
+                    <strong className="text-brand-ink text-xs block">{activeVehiclesCount}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-gray-400">TOTAL KM</span>
+                    <strong className="text-brand-ink text-xs block truncate">
+                      {totalKm.toLocaleString("pt-BR")}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="block text-gray-400">REEMB.</span>
+                    <strong className="text-emerald-700 text-xs block truncate">
+                      {totalReimbursement.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="block text-gray-400">MÉDIA KM</span>
+                    <strong className="text-brand-ink text-xs block">
+                      {averageKmPerOs.toFixed(0)}
+                    </strong>
+                  </div>
+                </div>
+
+                {/* Mini visual elements */}
+                <div className="space-y-1.5 text-[9px] font-bold">
+                  <div className="flex justify-between items-center text-gray-600">
+                    <span>Eficiência de trajeto</span>
+                    <span className="text-sky-600 font-mono">{totalKm > 0 ? "Alta" : "—"}</span>
+                  </div>
+                  <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
+                    <div className="bg-sky-500 h-full" style={{ width: totalKm > 0 ? "85%" : "0%" }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Stats */}
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 lg:col-span-2 flex flex-col justify-between">
+                <h4 className="font-display font-extrabold text-xs uppercase text-brand-ink border-b pb-1.5 flex items-center gap-1.5">
+                  <Car className="w-3.5 h-3.5 text-sky-500" />
+                  Resumo de Rodagem de Veículos
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-3 flex-1 items-center">
+                  <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
+                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Veículos Ativos</span>
+                    <strong className="font-display text-xl font-extrabold text-brand-ink mt-1 block">{activeVehiclesCount}</strong>
+                  </div>
+                  <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
+                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">KM Geral</span>
+                    <strong className="font-display text-xl font-extrabold text-brand-ink mt-1 block">
+                      {totalKm.toLocaleString("pt-BR")}
+                    </strong>
+                  </div>
+                  <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
+                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Reembolsos KM</span>
+                    <strong className="font-display text-xl font-extrabold text-emerald-700 mt-1 block">
+                      {totalReimbursement.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                    </strong>
+                  </div>
+                  <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
+                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Média KM</span>
+                    <strong className="font-display text-xl font-extrabold text-brand-ink mt-1 block">
+                      {averageKmPerOs.toFixed(0)} km
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Main Table Container */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
               <div>
                 <h3 className="font-display font-extrabold text-lg uppercase text-brand-ink">
-                  Relatório de Veículos
+                  Controle e Quilometragem de Veículos
                 </h3>
-                <p className="text-gray-500 text-xs">Análise de rodagem, custos de deslocamento e frotas de atendimento.</p>
-              </div>
-              <button 
-                onClick={() => {
-                  const data = [
-                    { Veiculo: "Toyota Hilux", OS: 112, KM: 6480, Faturamento: 9720.00, Combustivel: "980 L", Custo_KM: "R$ 1,85" },
-                    { Veiculo: "S10", OS: 68, KM: 3820, Faturamento: 5730.00, Combustivel: "570 L", Custo_KM: "R$ 1,90" },
-                    { Veiculo: "Strada", OS: 42, KM: 1650, Faturamento: 2475.00, Combustivel: "240 L", Custo_KM: "R$ 1,70" },
-                    { Veiculo: "Toro", OS: 25, KM: 500, Faturamento: 750.00, Combustivel: "75 L", Custo_KM: "R$ 1,78" }
-                  ];
-                  handleExportToExcel(data, "relatorio_veiculos");
-                }}
-                className="flex items-center gap-1.5 py-1.5 px-3 bg-brand-ink text-white font-bold rounded-lg text-[10px] uppercase hover:bg-brand-ink/95 shadow-sm"
-              >
-                <Download className="w-3.5 h-3.5" /> Exportar Planilha
-              </button>
-            </div>
-          </div>
-
-          {/* Top Row Grid: Card 3 and Quick Stats */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Card 3: Relatório de Veículos */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3 relative overflow-hidden flex flex-col justify-between">
-              <div className="absolute top-0 left-0 right-0 h-1 bg-sky-500" />
-              <div className="flex justify-between items-start border-b border-gray-50 pb-1">
-                <div>
-                  <h4 className="font-display font-extrabold text-xs uppercase text-brand-ink flex items-center gap-1">
-                    Relatório de Veículos
-                  </h4>
-                  <p className="text-[9px] text-gray-400 uppercase font-semibold">Deslocamento de frota</p>
-                </div>
+                <p className="text-gray-500 text-xs">Análise de rodagem, custos de deslocamento e frota utilizada no campo.</p>
               </div>
 
-              {/* Quick numbers row */}
-              <div className="grid grid-cols-4 gap-1 text-center bg-gray-50 p-1.5 rounded-lg border border-gray-100 text-[9px] font-bold text-gray-500">
-                <div>
-                  <span className="block text-gray-400">VEÍCULOS</span>
-                  <strong className="text-brand-ink text-xs block">4</strong>
-                </div>
-                <div>
-                  <span className="block text-gray-400">TOTAL KM</span>
-                  <strong className="text-brand-ink text-xs block truncate">
-                    {finalizadas.reduce((sum, o) => sum + (o.km_rodado_total || 0), 0) || "12.4k"}
-                  </strong>
-                </div>
-                <div>
-                  <span className="block text-gray-400">REEMB.</span>
-                  <strong className="text-emerald-700 text-xs block truncate">
-                    R$ {finalizadas.reduce((sum, o) => sum + (o.valor_deslocamento || 0), 0).toFixed(0) || "18.6k"}
-                  </strong>
-                </div>
-                <div>
-                  <span className="block text-gray-400">MÉDIA KM</span>
-                  <strong className="text-brand-ink text-xs block">
-                    {finalizadas.length > 0 ? (finalizadas.reduce((sum, o) => sum + (o.km_rodado_total || 0), 0) / finalizadas.length).toFixed(0) : "58"}
-                  </strong>
-                </div>
-              </div>
-
-              {/* Mini visual elements */}
-              <div className="space-y-1.5 text-[9px] font-bold">
-                <div className="flex justify-between items-center text-gray-600">
-                  <span>Eficiência de trajeto</span>
-                  <span className="text-sky-600 font-mono">Alta</span>
-                </div>
-                <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-sky-500 h-full" style={{ width: "85%" }} />
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Stats */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 lg:col-span-2 flex flex-col justify-between">
-              <h4 className="font-display font-extrabold text-xs uppercase text-brand-ink border-b pb-1.5 flex items-center gap-1.5">
-                <Car className="w-3.5 h-3.5 text-sky-500" />
-                Resumo de Rodagem de Veículos
-              </h4>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-3 flex-1 items-center">
-                <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
-                  <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Veículos Ativos</span>
-                  <strong className="font-display text-xl font-extrabold text-brand-ink mt-1 block">4</strong>
-                </div>
-                <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
-                  <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">KM Geral</span>
-                  <strong className="font-display text-xl font-extrabold text-brand-ink mt-1 block">
-                    {(finalizadas.reduce((sum, o) => sum + (o.km_rodado_total || 0), 0) || 12450).toLocaleString("pt-BR")}
-                  </strong>
-                </div>
-                <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
-                  <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Reembolsos KM</span>
-                  <strong className="font-display text-xl font-extrabold text-emerald-700 mt-1 block">
-                    {(finalizadas.reduce((sum, o) => sum + (o.valor_deslocamento || 0), 0) || 18675.00).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
-                  </strong>
-                </div>
-                <div className="bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-center">
-                  <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Média KM</span>
-                  <strong className="font-display text-xl font-extrabold text-brand-ink mt-1 block">
-                    {((finalizadas.reduce((sum, o) => sum + (o.km_rodado_total || 0), 0) / (finalizadas.length || 1)) || 58.5).toFixed(0)} km
-                  </strong>
-                </div>
+              {/* Fleet Table */}
+              <div className="overflow-x-auto border rounded-xl">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50/80 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                      <th className="p-4">Identificação Veículo</th>
+                      <th className="p-4 text-center">Quantidade O.S.</th>
+                      <th className="p-4 text-center">Quilometragem Rodada</th>
+                      <th className="p-4 text-right">Valor Deslocamento</th>
+                      <th className="p-4 text-center">Consumo Est.</th>
+                      <th className="p-4 text-center font-bold text-gray-500 uppercase">Custo Médio / KM</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-xs">
+                    {reportData.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-gray-400">Nenhum registro de veículo encontrado.</td>
+                      </tr>
+                    ) : (
+                      reportData.map((v, idx) => (
+                        <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="p-4 font-bold text-brand-ink">{v.name}</td>
+                          <td className="p-4 text-center font-bold text-gray-800">{v.count}</td>
+                          <td className="p-4 text-center font-mono font-bold text-gray-600">{v.km} km</td>
+                          <td className="p-4 text-right font-mono font-bold text-gray-700">
+                            {v.value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          </td>
+                          <td className="p-4 text-center font-semibold text-gray-500">{v.fuel}</td>
+                          <td className="p-4 text-center text-emerald-700 font-bold font-mono">{v.cost}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
-
-          {/* Main Table Container */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-            <div>
-              <h3 className="font-display font-extrabold text-lg uppercase text-brand-ink">
-                Controle e Quilometragem de Veículos
-              </h3>
-              <p className="text-gray-500 text-xs">Análise de rodagem, custos de deslocamento e frota utilizada no campo.</p>
-            </div>
-
-          {/* Fleet Table */}
-          <div className="overflow-x-auto border rounded-xl">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50/80 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                  <th className="p-4">Identificação Veículo</th>
-                  <th className="p-4 text-center">Quantidade O.S.</th>
-                  <th className="p-4 text-center">Quilometragem Rodada</th>
-                  <th className="p-4 text-right">Valor Deslocamento</th>
-                  <th className="p-4 text-center">Consumo Est.</th>
-                  <th className="p-4 text-center font-bold text-gray-500 uppercase">Custo Médio / KM</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-xs">
-                {[
-                  { name: "Toyota Hilux", count: 112, km: 6480, value: 9720.00, fuel: "980 L", cost: "R$ 1,85" },
-                  { name: "S10", count: 68, km: 3820, value: 5730.00, fuel: "570 L", cost: "R$ 1,90" },
-                  { name: "Strada", count: 42, km: 1650, value: 2475.00, fuel: "240 L", cost: "R$ 1,70" },
-                  { name: "Toro", count: 25, km: 500, value: 750.00, fuel: "75 L", cost: "R$ 1,78" }
-                ].map((v, idx) => (
-                  <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="p-4 font-bold text-brand-ink">{v.name}</td>
-                    <td className="p-4 text-center font-bold text-gray-800">{v.count}</td>
-                    <td className="p-4 text-center font-mono font-bold text-gray-600">{v.km} km</td>
-                    <td className="p-4 text-right font-mono font-bold text-gray-700">
-                      {v.value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                    </td>
-                    <td className="p-4 text-center font-semibold text-gray-500">{v.fuel}</td>
-                    <td className="p-4 text-center text-emerald-700 font-bold font-mono">{v.cost}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      )}
+        );
+      })()}
 
       {/* AGENDA REPORT TAB */}
       {activeTab === "agenda" && (() => {
@@ -2227,24 +2369,22 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
         };
 
         const workingDays = getWorkingDays(startDate, endDate);
-        const useReal = ordens.length > 0;
 
         // OS Agendadas: count of scheduled ones
-        const realAgendadasCount = filteredOrdens.filter(o => o.status === "AGENDADA").length;
-        const displayAgendadasCount = useReal ? realAgendadasCount : 86;
+        const displayAgendadasCount = filteredOrdens.filter(o => o.status === "AGENDADA").length;
 
         // Taxa de Ocupação: total pointed hours divided by active techs * working days * 8 hours
-        const activeTechsCount = tecnicos.filter(t => t.ativo !== false).length || 5;
+        const activeTechsCount = tecnicos.filter(t => t.ativo !== false).length;
         const totalCapacityHours = activeTechsCount * workingDays * 8;
         const totalHoursWorked = finalizadas.reduce((sum, o) => {
           return sum + (parseFloat(o.horas_trabalhadas_total || "0") || 0);
         }, 0);
-        const calculatedOcupacao = totalCapacityHours > 0 ? Math.round((totalHoursWorked / totalCapacityHours) * 100) : 78;
-        const displayOcupacao = (useReal && calculatedOcupacao > 0) ? Math.min(100, Math.max(10, calculatedOcupacao)) : 78;
+        const calculatedOcupacao = totalCapacityHours > 0 ? Math.round((totalHoursWorked / totalCapacityHours) * 100) : 0;
+        const displayOcupacao = Math.min(100, Math.max(0, calculatedOcupacao));
 
         // Média de OS/Dia: total finalized / working days
-        const calculatedAvgOSPerDay = workingDays > 0 ? (finalizadas.length / workingDays) : 3.9;
-        const displayAvgOSPerDay = useReal ? calculatedAvgOSPerDay.toFixed(1).replace(".", ",") : "3,9";
+        const calculatedAvgOSPerDay = workingDays > 0 ? (finalizadas.length / workingDays) : 0;
+        const displayAvgOSPerDay = calculatedAvgOSPerDay.toFixed(1).replace(".", ",");
 
         // Get weekday distribution from filteredOrdens
         const getDayOfWeek = (dateStr: string) => {
@@ -2268,7 +2408,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
           }
         });
 
-        const weekdaysSorted = [
+        const finalWeekdays = [
           { label: "Seg", value: weekdaysCount[1] },
           { label: "Ter", value: weekdaysCount[2] },
           { label: "Qua", value: weekdaysCount[3] },
@@ -2278,43 +2418,19 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
           { label: "Dom", value: weekdaysCount[0] }
         ];
 
-        const hasRealWeekdays = weekdaysSorted.some(w => w.value > 0);
-        const finalWeekdays = hasRealWeekdays ? weekdaysSorted : [
-          { label: "Seg", value: 18 },
-          { label: "Ter", value: 20 },
-          { label: "Qua", value: 22 },
-          { label: "Qui", value: 21 },
-          { label: "Sex", value: 19 },
-          { label: "Sáb", value: 4 },
-          { label: "Dom", value: 1 }
-        ];
-
         const maxWeekdayValue = Math.max(...finalWeekdays.map(w => w.value)) || 1;
 
         // Ocupação por Técnico
         const getTechOcupacaoList = () => {
-          const list = tecnicos.map(t => {
+          return tecnicos.map(t => {
             const hrs = getTechHoursRealizadas(Number(t.id));
             const capacity = workingDays * 8;
             const calculatedPct = capacity > 0 ? Math.round((hrs / capacity) * 100) : 0;
             return {
               name: t.apelido || t.nome,
-              pct: calculatedPct || 0
+              pct: Math.min(100, calculatedPct) || 0
             };
-          });
-
-          const hasRealOcupacao = list.some(l => l.pct > 0);
-          if (!hasRealOcupacao || !useReal) {
-            return [
-              { name: "Jefferson", pct: 88 },
-              { name: "Shelton", pct: 82 },
-              { name: "Lucas", pct: 76 },
-              { name: "Mayk", pct: 71 },
-              { name: "Auxiliares", pct: 65 }
-            ];
-          }
-
-          return list.sort((a, b) => b.pct - a.pct).slice(0, 5);
+          }).sort((a, b) => b.pct - a.pct).slice(0, 5);
         };
 
         const techOcupacaoList = getTechOcupacaoList();
@@ -2525,13 +2641,108 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
           return 0;
         }, 0);
 
-        const useReal = finalizadas.length > 0;
-        const displayComissoesTotal = useReal ? comissoesTotal : 18540;
-        const displayComissaoTecnicos = useReal ? comissaoTecnicosTotal : 15200;
-        const displayComissaoAuxiliares = useReal ? comissaoAuxiliaresTotal : 3340;
+        const displayComissoesTotal = comissoesTotal;
+        const displayComissaoTecnicos = comissaoTecnicosTotal;
+        const displayComissaoAuxiliares = comissaoAuxiliaresTotal;
 
-        const pctTecnicos = displayComissoesTotal > 0 ? Math.round((displayComissaoTecnicos / displayComissoesTotal) * 100) : 82;
-        const pctAuxiliares = displayComissoesTotal > 0 ? (100 - pctTecnicos) : 18;
+        const pctTecnicos = displayComissoesTotal > 0 ? Math.round((displayComissaoTecnicos / displayComissoesTotal) * 100) : 0;
+        const pctAuxiliares = displayComissoesTotal > 0 ? Math.round((displayComissaoAuxiliares / displayComissoesTotal) * 100) : 0;
+
+        // Precompute metrics list for each technician
+        const techMetricsList = tecnicos.map(t => {
+          const techOS = finalizadas.filter(o => o.tecnico_id === t.id || o.auxiliar_id === t.id);
+          const mo = techOS.reduce((sum, o) => sum + (o.valor_mao_obra || 0), 0);
+          
+          const comissao = techOS.reduce((sum, o) => {
+            const isCustom = o.comissao_custom_opcao === "personalizado";
+            if (isCustom) {
+              if (o.tecnico_id === t.id) {
+                return sum + (o.comissao_custom_valor_tecnico || 0);
+              }
+              if (o.auxiliar_id === t.id) {
+                return sum + (o.comissao_custom_valor_auxiliar || 0);
+              }
+            }
+            
+            // Automatic standard split: 10% on labor split between primary and auxiliary
+            const totalComm = (o.valor_mao_obra || 0) * 0.1;
+            if (o.auxiliar_id) {
+              if (o.tecnico_id === t.id) {
+                return sum + (totalComm * 0.8);
+              }
+              if (o.auxiliar_id === t.id) {
+                return sum + (totalComm * 0.2);
+              }
+            }
+            
+            return sum + totalComm;
+          }, 0);
+
+          const techMeta = getTechMeta(Number(t.id));
+          let finalMeta = "0%";
+          let metaValueStr = "";
+          if (techMeta) {
+            const metaComissaoVal = Number(techMeta.meta_comissao || 0);
+            if (metaComissaoVal > 0) {
+              const pct = (comissao / metaComissaoVal) * 100;
+              finalMeta = `${pct.toFixed(0)}%`;
+              metaValueStr = `Meta: ${metaComissaoVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}`;
+            } else {
+              const metaFaturamentoVal = Number(techMeta.meta_faturamento || 0);
+              if (metaFaturamentoVal > 0) {
+                const pct = (mo / metaFaturamentoVal) * 100;
+                finalMeta = `${pct.toFixed(0)}%`;
+                metaValueStr = `Meta MO: ${metaFaturamentoVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}`;
+              }
+            }
+          } else {
+            const hoursWorked = getTechHoursRealizadas(Number(t.id));
+            const capacity = 22 * 8;
+            const calculatedMeta = capacity > 0 ? Math.round((hoursWorked / capacity) * 100) : 0;
+            finalMeta = `${calculatedMeta}%`;
+          }
+
+          return {
+            id: t.id,
+            nome: t.nome,
+            apelido: t.apelido,
+            osCount: techOS.length,
+            mo,
+            comissao,
+            finalMeta,
+            metaValueStr
+          };
+        });
+
+        const techsWithComissao = techMetricsList.filter(item => item.comissao > 0).length;
+
+        // Dynamic monthly evolution
+        const monthsList = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+        const currentYear = new Date().getFullYear();
+        const endMonthIdx = endDate ? parseInt(endDate.split("-")[1]) - 1 : 6; // default July
+        const displayedMonths = monthsList.slice(0, Math.max(5, endMonthIdx + 1));
+
+        const monthlyCommissions = displayedMonths.map((monthName, idx) => {
+          const monthNumStr = String(idx + 1).padStart(2, '0');
+          const ordensInMonth = ordens.filter(o => {
+            if (o.status !== "FINALIZADA") return false;
+            const dateStr = getOrdemDateStr(o);
+            if (!dateStr) return false;
+            return dateStr.startsWith(`${currentYear}-${monthNumStr}`) || dateStr.includes(`-${monthNumStr}-`);
+          });
+          
+          const val = ordensInMonth.reduce((sum, o) => {
+            const isCustom = o.comissao_custom_opcao === "personalizado";
+            const cVal = isCustom 
+              ? ((o.comissao_custom_valor_tecnico || 0) + (o.comissao_custom_valor_auxiliar || 0))
+              : ((o.valor_mao_obra || 0) * 0.1);
+            return sum + cVal;
+          }, 0);
+          
+          return { month: monthName, val };
+        });
+
+        const maxVal = Math.max(...monthlyCommissions.map(m => m.val)) || 1000;
 
         return (
           <div className="space-y-6 animate-fade">
@@ -2546,54 +2757,13 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               </div>
               <button 
                 onClick={() => {
-                  const data = tecnicos.map((t, idx) => {
-                    const techOS = finalizadas.filter(o => o.tecnico_id === t.id || o.auxiliar_id === t.id);
-                    const mo = techOS.reduce((sum, o) => sum + (o.valor_mao_obra || 0), 0);
-                    const comissao = techOS.reduce((sum, o) => {
-                      const isCustom = o.comissao_custom_opcao === "personalizado";
-                      if (isCustom) {
-                        if (o.tecnico_id === t.id) return sum + (o.comissao_custom_valor_tecnico || 0);
-                        if (o.auxiliar_id === t.id) return sum + (o.comissao_custom_valor_auxiliar || 0);
-                      }
-                      const totalComm = (o.valor_mao_obra || 0) * 0.1;
-                      if (o.auxiliar_id) {
-                        if (o.tecnico_id === t.id) return sum + (totalComm * 0.8);
-                        if (o.auxiliar_id === t.id) return sum + (totalComm * 0.2);
-                      }
-                      return sum + totalComm;
-                    }, 0);
-
-                    const useReal = finalizadas.length > 0;
-                    const finalComissao = useReal ? comissao : [5230, 4450, 3650, 2870, 2340][idx] || 1500;
-                    const finalMO = useReal ? mo : (techOS.length * 850);
-
-                    const techMeta = getTechMeta(Number(t.id));
-                    let finalMeta = "100%";
-                    if (techMeta) {
-                      const metaComissaoVal = Number(techMeta.meta_comissao || 0);
-                      if (metaComissaoVal > 0) {
-                        finalMeta = `${((finalComissao / metaComissaoVal) * 100).toFixed(0)}%`;
-                      } else {
-                        const metaFaturamentoVal = Number(techMeta.meta_faturamento || 0);
-                        if (metaFaturamentoVal > 0) {
-                          finalMeta = `${((finalMO / metaFaturamentoVal) * 100).toFixed(0)}%`;
-                        }
-                      }
-                    } else {
-                      const hoursWorked = getTechHoursRealizadas(Number(t.id));
-                      const capacity = 22 * 8;
-                      const calculatedMeta = capacity > 0 ? Math.round((hoursWorked / capacity) * 100) : 0;
-                      finalMeta = (useReal && calculatedMeta > 0) ? `${calculatedMeta}%` : ["112%", "100%", "102%", "96%", "95%"][idx] || "100%";
-                    }
-
-                    return {
-                      Tecnico: t.nome,
-                      OS_Finalizadas: useReal ? techOS.length : [52, 47, 38, 29, 19][idx] || 10,
-                      Mao_De_Obra: finalMO,
-                      Comissao: finalComissao,
-                      Meta_Atingida: finalMeta
-                    };
-                  });
+                  const data = techMetricsList.map((tm) => ({
+                    Tecnico: tm.nome,
+                    OS_Finalizadas: tm.osCount,
+                    Mao_De_Obra: tm.mo,
+                    Comissao: tm.comissao,
+                    Meta_Atingida: tm.finalMeta
+                  }));
                   handleExportToExcel(data, "relatorio_comissoes");
                 }}
                 className="flex items-center gap-1.5 py-1.5 px-3 bg-brand-ink text-white font-bold rounded-lg text-[10px] uppercase hover:bg-brand-ink/95 shadow-sm"
@@ -2610,10 +2780,10 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Total do Período</span>
                 <strong className="font-display text-2xl font-extrabold text-emerald-950 mt-1 block">
-                  {(comissoesTotal > 0 ? comissoesTotal : 18540).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  {comissoesTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </strong>
               </div>
-              <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded self-start mt-2">▲ +12,4% vs. anterior</span>
+              <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded self-start mt-2">Sumarizado do período</span>
             </div>
 
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between min-h-[100px]">
@@ -2621,10 +2791,10 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Média por Técnico</span>
                 <strong className="font-display text-2xl font-extrabold text-blue-950 mt-1 block">
-                  {((comissoesTotal > 0 ? (comissoesTotal / (tecnicos.length || 1)) : 3708)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  {(tecnicos.length > 0 ? (comissoesTotal / tecnicos.length) : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </strong>
               </div>
-              <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded self-start mt-2">Dentro da meta</span>
+              <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded self-start mt-2">Média por colaborador</span>
             </div>
 
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between min-h-[100px]">
@@ -2632,10 +2802,10 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">Técnicos com Comissão</span>
                 <strong className="font-display text-2xl font-extrabold text-indigo-950 mt-1 block">
-                  {tecnicos.length || 5}
+                  {techsWithComissao}
                 </strong>
               </div>
-              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded self-start mt-2">Equipe ativa no campo</span>
+              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded self-start mt-2">Com saldo a pagar</span>
             </div>
 
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm relative overflow-hidden flex flex-col justify-between min-h-[100px]">
@@ -2643,10 +2813,10 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
               <div>
                 <span className="text-[9px] text-gray-400 font-bold uppercase block tracking-wider">% sobre Faturamento</span>
                 <strong className="font-display text-2xl font-extrabold text-amber-950 mt-1 block">
-                  {((comissoesTotal > 0 && faturamentoTotal > 0) ? ((comissoesTotal / faturamentoTotal) * 100).toFixed(1) : "5,7")}%
+                  {faturamentoTotal > 0 ? ((comissoesTotal / faturamentoTotal) * 100).toFixed(1).replace(".", ",") : "0,0"}%
                 </strong>
               </div>
-              <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded self-start mt-2">Meta &lt; 6,0%</span>
+              <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded self-start mt-2">Mão de obra e peças</span>
             </div>
           </div>
 
@@ -2655,20 +2825,11 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
             {/* Left Chart: Comissões por Mês */}
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4 lg:col-span-2">
               <h4 className="font-display font-extrabold text-sm uppercase text-brand-ink border-b pb-1">
-                Evolução das Comissões (Janeiro - Julho)
+                Evolução das Comissões ({displayedMonths[0]} - {displayedMonths[displayedMonths.length - 1]})
               </h4>
               <div className="h-64 flex items-end justify-between gap-2 pt-6 px-4">
-                {[
-                  { month: "Jan", val: 12800 },
-                  { month: "Fev", val: 14200 },
-                  { month: "Mar", val: 15600 },
-                  { month: "Abr", val: 16800 },
-                  { month: "Mai", val: 17200 },
-                  { month: "Jun", val: 17800 },
-                  { month: "Jul", val: comissoesTotal > 0 ? comissoesTotal : 18540 }
-                ].map((item, idx) => {
-                  const maxVal = 20000;
-                  const pct = Math.min(100, (item.val / maxVal) * 100);
+                {monthlyCommissions.map((item, idx) => {
+                  const pct = maxVal > 0 ? Math.min(100, (item.val / maxVal) * 100) : 0;
                   return (
                     <div key={idx} className="flex-1 flex flex-col items-center gap-2 group">
                       <div className="text-[9px] font-mono font-bold text-emerald-800 opacity-0 group-hover:opacity-100 transition-opacity bg-emerald-50 px-1 rounded shadow-sm">
@@ -2749,91 +2910,33 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs font-semibold text-gray-700">
-                  {tecnicos.map((t, idx) => {
-                    const techOS = finalizadas.filter(o => o.tecnico_id === t.id || o.auxiliar_id === t.id);
-                    const mo = techOS.reduce((sum, o) => sum + (o.valor_mao_obra || 0), 0);
-                    
-                    const comissao = techOS.reduce((sum, o) => {
-                      const isCustom = o.comissao_custom_opcao === "personalizado";
-                      if (isCustom) {
-                        if (o.tecnico_id === t.id) {
-                          return sum + (o.comissao_custom_valor_tecnico || 0);
-                        }
-                        if (o.auxiliar_id === t.id) {
-                          return sum + (o.comissao_custom_valor_auxiliar || 0);
-                        }
-                      }
-                      
-                      // Automatic standard split: 10% on labor split between primary and auxiliary
-                      const totalComm = (o.valor_mao_obra || 0) * 0.1;
-                      if (o.auxiliar_id) {
-                        if (o.tecnico_id === t.id) {
-                          return sum + (totalComm * 0.8);
-                        }
-                        if (o.auxiliar_id === t.id) {
-                          return sum + (totalComm * 0.2);
-                        }
-                      }
-                      
-                      return sum + totalComm;
-                    }, 0);
-
-                    const useReal = finalizadas.length > 0;
-                    
-                    const finalOSCount = useReal ? techOS.length : [52, 47, 38, 29, 19][idx] || 10;
-                    const finalMO = useReal ? mo : (finalOSCount * 850);
-                    const finalComissao = useReal ? comissao : [5230, 4450, 3650, 2870, 2340][idx] || 1500;
-                    
-                    const techMeta = getTechMeta(Number(t.id));
-                    let finalMeta = "100%";
-                    let metaValueStr = "";
-                    if (techMeta) {
-                      const metaComissaoVal = Number(techMeta.meta_comissao || 0);
-                      if (metaComissaoVal > 0) {
-                        const pct = (finalComissao / metaComissaoVal) * 100;
-                        finalMeta = `${pct.toFixed(0)}%`;
-                        metaValueStr = `Meta: ${metaComissaoVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}`;
-                      } else {
-                        const metaFaturamentoVal = Number(techMeta.meta_faturamento || 0);
-                        if (metaFaturamentoVal > 0) {
-                          const pct = (finalMO / metaFaturamentoVal) * 100;
-                          finalMeta = `${pct.toFixed(0)}%`;
-                          metaValueStr = `Meta MO: ${metaFaturamentoVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}`;
-                        }
-                      }
-                    } else {
-                      const hoursWorked = getTechHoursRealizadas(Number(t.id));
-                      const capacity = 22 * 8;
-                      const calculatedMeta = capacity > 0 ? Math.round((hoursWorked / capacity) * 100) : 0;
-                      finalMeta = (useReal && calculatedMeta > 0) ? `${calculatedMeta}%` : ["112%", "100%", "102%", "96%", "95%"][idx] || "100%";
-                    }
-
+                  {techMetricsList.map((tm, idx) => {
                     return (
-                      <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
+                      <tr key={tm.id} className="hover:bg-gray-50/50 transition-colors">
                         <td className="p-4 font-bold text-brand-ink flex items-center gap-2">
                           <span className="text-gray-400 font-extrabold w-4">{idx + 1}</span>
-                          {t.apelido || t.nome}
+                          {tm.apelido || tm.nome}
                         </td>
-                        <td className="p-4 text-center font-bold text-gray-900">{finalOSCount}</td>
+                        <td className="p-4 text-center font-bold text-gray-900">{tm.osCount}</td>
                         <td className="p-4 text-right font-mono text-gray-600">
-                          {finalMO.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          {tm.mo.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                         </td>
                         <td className="p-4 text-right font-mono font-bold text-emerald-700">
-                          {finalComissao.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          {tm.comissao.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                         </td>
                         <td className="p-4 text-center">
                           <div className="flex flex-col items-center gap-0.5">
                             <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                              parseInt(finalMeta) >= 100 
+                              parseInt(tm.finalMeta) >= 100 
                                 ? "bg-emerald-50 text-emerald-800" 
-                                : parseInt(finalMeta) >= 80 
+                                : parseInt(tm.finalMeta) >= 80 
                                   ? "bg-blue-50 text-blue-800"
                                   : "bg-amber-50 text-amber-800"
                             }`}>
-                              {finalMeta}
+                              {tm.finalMeta}
                             </span>
-                            {metaValueStr && (
-                              <span className="text-[9px] text-gray-400 font-semibold">{metaValueStr}</span>
+                            {tm.metaValueStr && (
+                              <span className="text-[9px] text-gray-400 font-semibold">{tm.metaValueStr}</span>
                             )}
                           </div>
                         </td>

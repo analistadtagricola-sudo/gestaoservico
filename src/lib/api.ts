@@ -178,19 +178,9 @@ const INITIAL_TIPOS_ATENDIMENTO: TipoAtendimento[] = [
 ];
 
 // Initial local storage items for Planos and Revisões
-const INITIAL_PLANOS: PlanoManutencao[] = [
-  { id: "PM000001", fabricante: "JOHN DEERE", modelo: "8370R", garantia_meses: 24, horimetro_base: 50, ativo: true, observacao: "Plano padrão para tratores de grande porte", grupo: "TRATORES" },
-  { id: "PM000002", fabricante: "CASE IH", modelo: "MAGNUM 340", garantia_meses: 12, horimetro_base: 100, ativo: true, observacao: "Plano básico de manutenção preventiva", grupo: "TRATORES" },
-  { id: "PM000003", fabricante: "VALTRA", modelo: "BH 194", garantia_meses: 18, horimetro_base: 50, ativo: true, observacao: "Manutenções severas em lavoura", grupo: "TRATORES" }
-];
+const INITIAL_PLANOS: PlanoManutencao[] = [];
 
-const INITIAL_REVISOES: PlanoRevisao[] = [
-  { id_revisao: "PR000001", id_plano: "PM000001", revisao_numero: 1, horas_limite: 50, meses_limite: 6, descricao: "Revisão de entrega técnica e lubrificação básica" },
-  { id_revisao: "PR000002", id_plano: "PM000001", revisao_numero: 2, horas_limite: 250, meses_limite: 12, descricao: "Revisão geral, troca de filtros de óleo" },
-  { id_revisao: "PR000003", id_plano: "PM000001", revisao_numero: 3, horas_limite: 500, meses_limite: 18, descricao: "Revisão do sistema hidráulico e transmissão" },
-  { id_revisao: "PR000004", id_plano: "PM000002", revisao_numero: 1, horas_limite: 100, meses_limite: 6, descricao: "Primeira troca de óleos e verificação de torques" },
-  { id_revisao: "PR000005", id_plano: "PM000002", revisao_numero: 2, horas_limite: 500, meses_limite: 12, descricao: "Revisão completa de filtros e bicos injetores" }
-];
+const INITIAL_REVISOES: PlanoRevisao[] = [];
 
 export const API = {
   clientes: {
@@ -222,10 +212,8 @@ export const API = {
               hasMore = false;
             }
           }
-          if (allData.length > 0) {
-            localStorage.setItem("gst_clientes", JSON.stringify(allData));
-            return allData;
-          }
+          localStorage.setItem("gst_clientes", JSON.stringify(allData));
+          return allData;
         } catch (e) {
           console.warn("Supabase fetch clients error, using local data:", e);
         }
@@ -262,30 +250,7 @@ export const API = {
         return allData;
       } catch (err) {
         console.warn("Falling back to simulated clients...", err);
-        const initial: Cliente[] = [
-          {
-            id: 1,
-            codigo_sankhya: '1',
-            razao_social: 'DANIEL TRATORES AGRICOLA LTDA',
-            nome_fantasia: 'DANIEL TRATORES AGRICOLA',
-            cpf_cnpj: '11.994.044/0001-09',
-            inscricao_estadual: '3067351',
-            tipo_pessoa: 'J',
-            ativo: true,
-            cep: '76877225',
-            endereco: 'BR-364',
-            numero: '3949',
-            complemento: '',
-            bairro: 'INDUSTRIAL JAMARI',
-            cidade: 'ARIQUEMES',
-            uf: 'RO',
-            telefone: '(069) 3535-4633',
-            celular: '',
-            email: 'contato@dtagricola.com.br'
-          }
-        ];
-        localStorage.setItem("gst_clientes", JSON.stringify(initial));
-        return initial;
+        return [];
       }
     },
 
@@ -923,15 +888,7 @@ export const API = {
         console.warn("Falling back to simulated tecnicos...");
         const saved = localStorage.getItem("gst_tecnicos");
         if (saved) return JSON.parse(saved);
-        // Create initial default technicians for a smooth setup
-        const initial = [
-          { id: 1, nome: "JEFFERSON SILVA", apelido: "JEFFERSON", cargo: "TÉCNICO SÊNIOR", telefone: "(69) 99200-1122", email: "jefferson@gmail.com", ativo: true, cor_agenda: "#E30613" },
-          { id: 2, nome: "DELTERONIMO SILVA", apelido: "DELTERONIMO", cargo: "TÉCNICO", telefone: "(69) 99211-2233", email: "delteronimo@gmail.com", ativo: true, cor_agenda: "#2563eb" },
-          { id: 3, nome: "LUCAS MOREIRA", apelido: "LUCAS", cargo: "TÉCNICO", telefone: "(69) 99222-3344", email: "lucas@gmail.com", ativo: true, cor_agenda: "#16a34a" },
-          { id: 4, nome: "SHELTON SOUZA", apelido: "SHELTON", cargo: "TÉCNICO", telefone: "(69) 99233-4455", email: "shelton@gmail.com", ativo: true, cor_agenda: "#9333ea" }
-        ];
-        localStorage.setItem("gst_tecnicos", JSON.stringify(initial));
-        return initial;
+        return [];
       }
     },
 
@@ -1150,30 +1107,10 @@ export const API = {
           return os as OrdemServico;
         });
 
-        // Merge local storage fallback items so local OS entries like OS 0005 are not lost on refresh
-        let combinedData = [...fetchedData];
-        try {
-          const savedLocalStr = localStorage.getItem("gst_ordens_servico");
-          if (savedLocalStr) {
-            const savedLocal: OrdemServico[] = JSON.parse(savedLocalStr);
-            const fetchedIds = new Set(fetchedData.map(o => String(o.id)));
-            const fetchedNumeros = new Set(fetchedData.map(o => o.numero_os ? String(o.numero_os).trim() : "").filter(Boolean));
-
-            const localOnlyItems = savedLocal.filter(loc => {
-              if (!loc || !loc.id) return false;
-              if (fetchedIds.has(String(loc.id))) return false;
-              if (loc.numero_os && fetchedNumeros.has(String(loc.numero_os).trim())) return false;
-              return true;
-            });
-
-            combinedData = [...fetchedData, ...localOnlyItems];
-          }
-        } catch (e) {
-          console.error("Error merging local items in listar():", e);
-        }
-
-        localStorage.setItem("gst_ordens_servico", JSON.stringify(combinedData));
-        return combinedData;
+        // Overwrite local storage entirely when database fetch succeeds.
+        // This removes any old simulated/ghost service orders from showing up when the database is empty.
+        localStorage.setItem("gst_ordens_servico", JSON.stringify(fetchedData));
+        return fetchedData;
       } catch (err) {
         console.warn("Database fetch failed, falling back to local storage...", err);
         const saved = localStorage.getItem("gst_ordens_servico");
@@ -2539,7 +2476,8 @@ export const API = {
           ultimo_acesso: u.ultimo_acesso && u.ultimo_acesso !== "Nunca" ? u.ultimo_acesso : "Hoje, 09:30",
           foto: u.foto,
           senha: u.senha,
-          permissoes
+          permissoes,
+          limite_telas: permissoes?.limite_telas ?? u.limite_telas ?? 0
         };
       };
 
@@ -2633,6 +2571,7 @@ export const API = {
       // Attempt Supabase insert in background
       try {
         const p = usuario.permissoes || DEFAULT_PERMISSIONS_LOCAL;
+        const pWithLimit = { ...p, limite_telas: usuario.limite_telas ?? 0 };
         const preparedUser = {
           id: usuario.id,
           nome: usuario.nome,
@@ -2643,7 +2582,7 @@ export const API = {
           ultimo_acesso: usuario.ultimo_acesso,
           foto: usuario.foto,
           senha: usuario.senha,
-          permissoes: JSON.stringify(p),
+          permissoes: JSON.stringify(pWithLimit),
           perm_dashboard_consultar: p.dashboard?.consultar ?? false,
           perm_dashboard_editar: p.dashboard?.editar ?? false,
           perm_dashboard_excluir: p.dashboard?.excluir ?? false,
@@ -2692,6 +2631,7 @@ export const API = {
       // Attempt Supabase update in background
       try {
         const p = usuario.permissoes || DEFAULT_PERMISSIONS_LOCAL;
+        const pWithLimit = { ...p, limite_telas: usuario.limite_telas ?? 0 };
         const preparedUser = {
           nome: usuario.nome,
           usuario: usuario.usuario,
@@ -2701,7 +2641,7 @@ export const API = {
           ultimo_acesso: usuario.ultimo_acesso,
           foto: usuario.foto,
           senha: usuario.senha,
-          permissoes: JSON.stringify(p),
+          permissoes: JSON.stringify(pWithLimit),
           perm_dashboard_consultar: p.dashboard?.consultar ?? false,
           perm_dashboard_editar: p.dashboard?.editar ?? false,
           perm_dashboard_excluir: p.dashboard?.excluir ?? false,
@@ -3122,27 +3062,82 @@ export const API = {
           .select("*")
           .eq("ativo", true);
 
+        const mockRuleTypes = [
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLAINA",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - GRADES",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - INOCULADOR/MONITORAMENTO",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - KUHN (SEM ASSISTENCIA FABRICA)",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - JORGE MAQ. (SEM ASSISTENCIA FABRICA)",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA",
+          "MANUTENÇÃO CORRETIVA",
+          "MANUTENÇÃO PREVENTIVA",
+          "GARANTIA"
+        ];
+
         if (!error && data && data.length > 0) {
-          return data.map((item: any) => {
-            let obs: any = {};
-            if (item.observacao) {
-              try { obs = JSON.parse(item.observacao); } catch (e) {}
-            }
-            return {
-              tipo: item.tipo_atendimento,
-              baseCalculo: item.base_calculo,
-              valorTecnico: item.base_calculo === "fixo" ? Number(item.valor_fixo || 0) : Number(item.percentual || 0),
-              valorHoraComissao: obs.valorHoraComissao,
-              valorKmComissao: obs.valorKmComissao,
-              regraAuxiliar: obs.regraAuxiliar || "racha_50_50",
-              valorAuxiliar: obs.valorAuxiliar || 0
-            };
-          });
+          return data
+            .filter((item: any) => !mockRuleTypes.some(m => m.toLowerCase().trim() === (item.tipo_atendimento || "").toLowerCase().trim()))
+            .map((item: any) => {
+              let obs: any = {};
+              if (item.observacao) {
+                try { obs = JSON.parse(item.observacao); } catch (e) {}
+              }
+              return {
+                tipo: item.tipo_atendimento,
+                baseCalculo: item.base_calculo,
+                valorTecnico: item.base_calculo === "fixo" ? Number(item.valor_fixo || 0) : Number(item.percentual || 0),
+                valorHoraComissao: obs.valorHoraComissao,
+                valorKmComissao: obs.valorKmComissao,
+                regraAuxiliar: obs.regraAuxiliar || "racha_50_50",
+                valorAuxiliar: obs.valorAuxiliar || 0
+              };
+            });
         }
       } catch (err) {
         console.warn("Erro ao listar comissao_regras no Supabase:", err);
       }
       return [];
+    },
+
+    async excluirRegrasFicticias(): Promise<boolean> {
+      try {
+        const mockRuleTypes = [
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLAINA",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - GRADES",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - INOCULADOR/MONITORAMENTO",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - KUHN (SEM ASSISTENCIA FABRICA)",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - JORGE MAQ. (SEM ASSISTENCIA FABRICA)",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES",
+          "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA",
+          "MANUTENÇÃO CORRETIVA",
+          "MANUTENÇÃO PREVENTIVA",
+          "GARANTIA"
+        ];
+        await supabase
+          .from("comissao_regras")
+          .delete()
+          .in("tipo_atendimento", mockRuleTypes);
+        return true;
+      } catch (err) {
+        console.warn("Erro ao excluir regras ficticias do banco:", err);
+        return false;
+      }
+    },
+
+    async excluir(tipo: string): Promise<boolean> {
+      try {
+        await supabase
+          .from("comissao_regras")
+          .delete()
+          .eq("tipo_atendimento", tipo);
+        return true;
+      } catch (err) {
+        console.warn("Erro ao excluir regra de comissao:", err);
+        return false;
+      }
     },
 
     async sincronizar(regras: any[]): Promise<boolean> {

@@ -96,24 +96,29 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
   const [toast, setToast] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [activeTab, setActiveTab] = useState<"regras" | "metas" | "faixas" | "centros">("regras");
 
-  const DEFAULT_REGRAS_ATENDIMENTO: RegraAtendimento[] = [
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLAINA", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - GRADES", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - INOCULADOR/MONITORAMENTO", baseCalculo: "fixo", valorTecnico: 200, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - KUHN (SEM ASSISTENCIA FABRICA)", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - JORGE MAQ. (SEM ASSISTENCIA FABRICA)", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS", baseCalculo: "fixo", valorTecnico: 150, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES", baseCalculo: "fixo", valorTecnico: 500, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA", baseCalculo: "fixo", valorTecnico: 350, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MANUTENÇÃO CORRETIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "MANUTENÇÃO PREVENTIVA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
-    { tipo: "GARANTIA", baseCalculo: "faturamento_total", valorTecnico: 20, valorHoraComissao: 50, valorKmComissao: 1.50, regraAuxiliar: "racha_50_50", valorAuxiliar: 0 },
+  const MOCK_RULE_TYPES = [
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLAINA",
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - GRADES",
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - INOCULADOR/MONITORAMENTO",
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - KUHN (SEM ASSISTENCIA FABRICA)",
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - JORGE MAQ. (SEM ASSISTENCIA FABRICA)",
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - IMPLEMENTOS TERCEIROS",
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - DRONES",
+    "MONTAGEM/ENTREGA TÉCNICA - EMPRESA - PLATAFORMA",
+    "MANUTENÇÃO CORRETIVA",
+    "MANUTENÇÃO PREVENTIVA",
+    "GARANTIA"
   ];
+
+  const DEFAULT_REGRAS_ATENDIMENTO: RegraAtendimento[] = [];
 
   useEffect(() => {
     // Load config & rules from API / Supabase
     const fetchConfigAndRegras = async () => {
       try {
+        // Clean up database from fictitious rules
+        await API.comissaoRegras.excluirRegrasFicticias();
+
         const [dbConfig, dbRegras] = await Promise.all([
           API.comissaoConfig.obter(),
           API.comissaoRegras.listar()
@@ -149,36 +154,35 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
           API.comissaoConfig.salvar(defaultConfig);
         }
 
-        if (dbRegras && dbRegras.length > 0) {
-          const merged = [...DEFAULT_REGRAS_ATENDIMENTO];
-          dbRegras.forEach((userRule: any) => {
-            const idx = merged.findIndex(r => r.tipo.toLowerCase().trim() === userRule.tipo.toLowerCase().trim());
-            if (idx >= 0) {
-              merged[idx] = userRule;
-            } else {
-              merged.push(userRule);
+        // Clean up localstorage from fictitious rules
+        const savedConfig = localStorage.getItem("gst_comissoes_config");
+        let initialRegras: RegraAtendimento[] = [];
+        if (savedConfig) {
+          try {
+            const parsed = JSON.parse(savedConfig);
+            if (parsed.regrasAtendimento && parsed.regrasAtendimento.length > 0) {
+              initialRegras = parsed.regrasAtendimento.filter((r: any) => 
+                !MOCK_RULE_TYPES.some(m => m.toLowerCase().trim() === r.tipo.toLowerCase().trim())
+              );
+              parsed.regrasAtendimento = initialRegras;
+              localStorage.setItem("gst_comissoes_config", JSON.stringify(parsed));
             }
-          });
-          setRegrasAtendimento(merged);
+          } catch (e) {}
+        }
+
+        if (dbRegras && dbRegras.length > 0) {
+          const filtered = dbRegras.filter((r: any) => 
+            !MOCK_RULE_TYPES.some(m => m.toLowerCase().trim() === r.tipo.toLowerCase().trim())
+          );
+          setRegrasAtendimento(filtered);
         } else {
-          // Check localstorage or use defaults
-          const savedConfig = localStorage.getItem("gst_comissoes_config");
-          let initialRegras = DEFAULT_REGRAS_ATENDIMENTO;
-          if (savedConfig) {
-            try {
-              const parsed = JSON.parse(savedConfig);
-              if (parsed.regrasAtendimento && parsed.regrasAtendimento.length > 0) {
-                initialRegras = parsed.regrasAtendimento;
-              }
-            } catch (e) {}
-          }
           setRegrasAtendimento(initialRegras);
           // Sync rules to Supabase!
           API.comissaoRegras.sincronizar(initialRegras);
         }
       } catch (e) {
         console.error("Erro ao carregar regras/config do banco:", e);
-        setRegrasAtendimento(DEFAULT_REGRAS_ATENDIMENTO);
+        setRegrasAtendimento([]);
       }
     };
     fetchConfigAndRegras();
@@ -423,9 +427,17 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
     showToast("Regra específica adicionada com sucesso!", "success");
   };
 
-  const handleRemoveAtendimentoRule = (index: number) => {
+  const handleRemoveAtendimentoRule = async (index: number) => {
+    const ruleToRemove = regrasAtendimento[index];
+    if (ruleToRemove) {
+      try {
+        await API.comissaoRegras.excluir(ruleToRemove.tipo);
+      } catch (e) {
+        console.warn("Erro ao deletar regra no Supabase:", e);
+      }
+    }
     setRegrasAtendimento(regrasAtendimento.filter((_, i) => i !== index));
-    showToast("Regra removida da tabela.", "success");
+    showToast("Regra removida com sucesso da tabela.", "success");
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -793,27 +805,30 @@ export const ComissoesConfigView: React.FC<ComissoesConfigViewProps> = ({ onNavi
             </div>
             <button
               type="button"
-              onClick={() => {
-                const merged = [...DEFAULT_REGRAS_ATENDIMENTO];
-                regrasAtendimento.forEach(userRule => {
-                  if (!merged.some(r => r.tipo.toLowerCase().trim() === userRule.tipo.toLowerCase().trim())) {
-                    merged.push(userRule);
+              onClick={async () => {
+                if (!confirm("Tem certeza que deseja excluir todas as regras de comissão específicas?")) return;
+                try {
+                  for (const r of regrasAtendimento) {
+                    await API.comissaoRegras.excluir(r.tipo);
                   }
-                });
-                setRegrasAtendimento(merged);
+                  await API.comissaoRegras.excluirRegrasFicticias();
+                } catch (e) {
+                  console.warn(e);
+                }
+                setRegrasAtendimento([]);
                 const currentConfig = JSON.parse(localStorage.getItem("gst_comissoes_config") || "{}");
                 localStorage.setItem("gst_comissoes_config", JSON.stringify({
                   ...currentConfig,
                   regraPadrao,
-                  regrasAtendimento: merged
+                  regrasAtendimento: []
                 }));
                 window.dispatchEvent(new Event("comissoes_config_updated"));
-                showToast("Tabela padrão de Débito Interno e Entregas Técnicas restaurada e salva com sucesso!", "success");
+                showToast("Todas as regras específicas foram excluídas!", "success");
               }}
               className="px-3 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-200 hover:bg-gray-100 rounded-lg shadow-sm transition-all flex items-center gap-1.5 shrink-0"
             >
-              <RotateCcw className="w-3.5 h-3.5 text-brand-red" />
-              Restaurar Regras Padrão
+              <Trash2 className="w-3.5 h-3.5 text-brand-red" />
+              Limpar Todas as Regras
             </button>
           </div>
 

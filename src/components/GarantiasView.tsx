@@ -528,14 +528,6 @@ export const GarantiasView: React.FC<GarantiasViewProps> = ({ onNavigate }) => {
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-slate-900 text-white rounded-xl border border-slate-800 flex items-center gap-2.5 text-xs">
-            <Database className="w-4 h-4 text-emerald-400 shrink-0" />
-            <div>
-              <span className="text-[10px] uppercase font-mono text-slate-400 block font-bold">Banco de Dados (Supabase)</span>
-              <span className="font-extrabold text-emerald-400 font-mono">{implementos.length} Equipamentos</span>
-            </div>
-          </div>
-
           <button
             onClick={() => {
               const first = implementos[0];
@@ -558,7 +550,7 @@ export const GarantiasView: React.FC<GarantiasViewProps> = ({ onNavigate }) => {
         <div 
           onClick={() => { setActiveTab("frota"); setStatusFilter("VIGENTE"); }}
           className={`p-4 bg-white border rounded-2xl shadow-2xs hover:shadow-xs cursor-pointer transition-all ${
-            statusFilter === "VIGENTE" && activeTab === "frota" ? "ring-2 ring-emerald-500 border-emerald-300" : "border-gray-200"
+            statusFilter === "VIGENTE" && activeTab === "frota" ? "ring-2 ring-emerald-500 border-emerald-300" : "border-gray-300"
           }`}
         >
           <div className="flex items-center justify-between">
@@ -575,7 +567,7 @@ export const GarantiasView: React.FC<GarantiasViewProps> = ({ onNavigate }) => {
         <div 
           onClick={() => { setActiveTab("frota"); setStatusFilter("EXPIRANDO"); }}
           className={`p-4 bg-white border rounded-2xl shadow-2xs hover:shadow-xs cursor-pointer transition-all ${
-            statusFilter === "EXPIRANDO" && activeTab === "frota" ? "ring-2 ring-amber-500 border-amber-300" : "border-gray-200"
+            statusFilter === "EXPIRANDO" && activeTab === "frota" ? "ring-2 ring-amber-500 border-amber-300" : "border-gray-300"
           }`}
         >
           <div className="flex items-center justify-between">
@@ -592,7 +584,7 @@ export const GarantiasView: React.FC<GarantiasViewProps> = ({ onNavigate }) => {
         <div 
           onClick={() => { setActiveTab("frota"); setStatusFilter("EXPIRADA"); }}
           className={`p-4 bg-white border rounded-2xl shadow-2xs hover:shadow-xs cursor-pointer transition-all ${
-            statusFilter === "EXPIRADA" && activeTab === "frota" ? "ring-2 ring-gray-400 border-gray-400" : "border-gray-200"
+            statusFilter === "EXPIRADA" && activeTab === "frota" ? "ring-2 ring-gray-400 border-gray-400" : "border-gray-300"
           }`}
         >
           <div className="flex items-center justify-between">
@@ -609,7 +601,7 @@ export const GarantiasView: React.FC<GarantiasViewProps> = ({ onNavigate }) => {
         <div 
           onClick={() => { setActiveTab("frota"); setStatusFilter("PERDIDA"); }}
           className={`p-4 bg-rose-50/80 border rounded-2xl shadow-2xs hover:shadow-xs cursor-pointer transition-all ${
-            statusFilter === "PERDIDA" && activeTab === "frota" ? "ring-2 ring-rose-500 border-rose-300" : "border-rose-200"
+            statusFilter === "PERDIDA" && activeTab === "frota" ? "ring-2 ring-rose-500 border-rose-300" : "border-rose-300"
           }`}
         >
           <div className="flex items-center justify-between">
@@ -626,7 +618,7 @@ export const GarantiasView: React.FC<GarantiasViewProps> = ({ onNavigate }) => {
         <div 
           onClick={() => setActiveTab("chamados")}
           className={`p-4 bg-white border rounded-2xl shadow-2xs hover:shadow-xs cursor-pointer transition-all ${
-            activeTab === "chamados" ? "ring-2 ring-blue-500 border-blue-300" : "border-gray-200"
+            activeTab === "chamados" ? "ring-2 ring-blue-500 border-blue-300" : "border-gray-300"
           }`}
         >
           <div className="flex items-center justify-between">

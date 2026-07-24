@@ -3,12 +3,15 @@ import { Cpu, CheckCircle2, AlertCircle, FileSpreadsheet, UploadCloud, RefreshCw
 import * as XLSX from "xlsx";
 import { API } from "../lib/api";
 import { Cliente, Implemento, OrdemServico } from "../types";
+import { useUser } from "../lib/UserContext";
+import { addAuditLog } from "../lib/auditLogger";
 
 interface IntegracoesViewProps {
   onRefresh?: () => Promise<void>;
 }
 
 export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) => {
+  const { currentUser } = useUser();
   // Existing integrations config states
   const [whatsappEnabled, setWhatsappEnabled] = useState(false);
   const [whatsappToken, setwhatsappToken] = useState("");
@@ -79,6 +82,13 @@ export const IntegracoesView: React.FC<IntegracoesViewProps> = ({ onRefresh }) =
     };
     localStorage.setItem("gst_integrations_v1", JSON.stringify(config));
     showToast("Configurações de integrações salvas com sucesso!");
+    addAuditLog(
+      currentUser?.nome || currentUser?.usuario,
+      "Sistema",
+      "SUCESSO",
+      "Configuração de Integrações",
+      "As configurações de integração com WhatsApp, Google Drive e ERP foram atualizadas."
+    );
   };
 
   // Helper comparison standardizers to prevent duplication
@@ -319,6 +329,13 @@ const normalizeKey = (k: string) => k ? String(k).toLowerCase().normalize("NFD")
     setImportLogs(newLogs);
     setImportResult({ inserted, updated, failed });
     showToast("Processamento da planilha de clientes concluído!", "success");
+    addAuditLog(
+      currentUser?.nome || currentUser?.usuario,
+      "Clientes & Implementos",
+      failed > 0 ? "ALERTA" : "SUCESSO",
+      "Importação de Clientes via Excel",
+      `Planilha de Clientes processada. Inseridos: ${inserted}, Atualizados: ${updated}, Falhas: ${failed}.`
+    );
 
     if (onRefresh) {
       await onRefresh();
@@ -656,6 +673,13 @@ const normalizeKey = (k: string) => k ? String(k).toLowerCase().normalize("NFD")
     setImportLogs(newLogs);
     setImportResult({ inserted, updated, failed });
     showToast("Processamento da planilha de implementos concluído!", "success");
+    addAuditLog(
+      currentUser?.nome || currentUser?.usuario,
+      "Clientes & Implementos",
+      failed > 0 ? "ALERTA" : "SUCESSO",
+      "Importação de Implementos via Excel",
+      `Planilha de Implementos processada. Inseridos: ${inserted}, Atualizados: ${updated}, Falhas: ${failed}.`
+    );
 
     if (onRefresh) {
       await onRefresh();
@@ -1033,6 +1057,13 @@ const normalizeKey = (k: string) => k ? String(k).toLowerCase().normalize("NFD")
     setImportLogs(newLogs);
     setImportResult({ inserted, updated, failed });
     showToast("Processamento da planilha de Ordens de Serviço concluído!", "success");
+    addAuditLog(
+      currentUser?.nome || currentUser?.usuario,
+      "Ordens de Serviço",
+      failed > 0 ? "ALERTA" : "SUCESSO",
+      "Importação de O.S. via Excel",
+      `Planilha de Ordens de Serviço processada. Inseridos: ${inserted}, Atualizados: ${updated}, Falhas: ${failed}.`
+    );
 
     if (onRefresh) {
       await onRefresh();

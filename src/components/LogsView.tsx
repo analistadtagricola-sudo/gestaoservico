@@ -28,51 +28,15 @@ export interface AuditLog {
   ip?: string;
 }
 
-const DEFAULT_INITIAL_LOGS: AuditLog[] = [
+const getDefaultLogs = (): AuditLog[] => [
   {
-    id: "log-101",
-    data: new Date(Date.now() - 1000 * 60 * 15).toLocaleString("pt-BR"),
-    usuario: "admin",
-    categoria: "Ordens de Serviço",
-    nivel: "SUCESSO",
-    acao: "Abertura de O.S.",
-    detalhes: "Ordem de Serviço OS000002 criada para o cliente DANIEL TRATORES AGRICOLA LTDA."
-  },
-  {
-    id: "log-102",
-    data: new Date(Date.now() - 1000 * 60 * 45).toLocaleString("pt-BR"),
-    usuario: "admin",
-    categoria: "Financeiro & Comissões",
-    nivel: "INFO",
-    acao: "Cálculo de Comissão",
-    detalhes: "Comissão da OS000002 processada com regra de Débito Interno/Atendimento."
-  },
-  {
-    id: "log-103",
-    data: new Date(Date.now() - 1000 * 60 * 120).toLocaleString("pt-BR"),
-    usuario: "admin",
-    categoria: "Clientes & Implementos",
-    nivel: "SUCESSO",
-    acao: "Importação de Clientes",
-    detalhes: "Planilha Excel de clientes sincronizada via módulo de Integrações."
-  },
-  {
-    id: "log-104",
-    data: new Date(Date.now() - 1000 * 60 * 240).toLocaleString("pt-BR"),
+    id: "log-100",
+    data: new Date().toLocaleString("pt-BR"),
     usuario: "sistema",
     categoria: "Sistema",
     nivel: "INFO",
-    acao: "Sincronização Supabase",
-    detalhes: "Sincronização automática de tabelas com banco de dados em nuvem."
-  },
-  {
-    id: "log-105",
-    data: new Date(Date.now() - 1000 * 60 * 360).toLocaleString("pt-BR"),
-    usuario: "admin",
-    categoria: "Autenticação & Segurança",
-    nivel: "INFO",
-    acao: "Login de Usuário",
-    detalhes: "Sessão iniciada com sucesso pelo usuário Administrador."
+    acao: "Inicialização do Sistema",
+    detalhes: "Módulos de Gestão de Serviços e conexões de banco de dados ativados."
   }
 ];
 
@@ -85,14 +49,22 @@ export const LogsView: React.FC = () => {
 
   useEffect(() => {
     loadLogs();
+
+    const handleUpdate = () => {
+      loadLogs();
+    };
+    window.addEventListener("gst_audit_logs_updated", handleUpdate);
+    return () => {
+      window.removeEventListener("gst_audit_logs_updated", handleUpdate);
+    };
   }, []);
 
   const loadLogs = () => {
-    const stored = localStorage.getItem("gst_audit_logs_v1");
-    if (stored) {
+    const stored = localStorage.getItem("gst_audit_logs_v3");
+    if (stored !== null) {
       try {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           setLogs(parsed);
           return;
         }
@@ -101,8 +73,9 @@ export const LogsView: React.FC = () => {
       }
     }
     // Seed default logs if none stored
-    setLogs(DEFAULT_INITIAL_LOGS);
-    localStorage.setItem("gst_audit_logs_v1", JSON.stringify(DEFAULT_INITIAL_LOGS));
+    const defaults = getDefaultLogs();
+    setLogs(defaults);
+    localStorage.setItem("gst_audit_logs_v3", JSON.stringify(defaults));
   };
 
   const showToast = (text: string, type: "success" | "error" = "success") => {
@@ -113,7 +86,7 @@ export const LogsView: React.FC = () => {
   const handleClearLogs = () => {
     if (window.confirm("Deseja realmente limpar todo o histórico de logs de auditoria?")) {
       setLogs([]);
-      localStorage.setItem("gst_audit_logs_v1", JSON.stringify([]));
+      localStorage.setItem("gst_audit_logs_v3", JSON.stringify([]));
       showToast("Histórico de logs limpo com sucesso!");
     }
   };
@@ -125,15 +98,18 @@ export const LogsView: React.FC = () => {
     }
 
     const headers = ["ID", "Data/Hora", "Usuário", "Categoria", "Nível", "Ação", "Detalhes"];
-    const rows = filteredLogs.map(l => [
-      l.id,
-      `"${l.data}"`,
-      `"${l.usuario}"`,
-      `"${l.categoria}"`,
-      `"${l.nivel}"`,
-      `"${l.acao}"`,
-      `"${l.detalhes.replace(/"/g, '""')}"`
-    ]);
+    const rows = filteredLogs.map(l => {
+      const safeDetails = l.detalhes ? l.detalhes.replace(/"/g, '""') : "";
+      return [
+        l.id,
+        `"${l.data || ""}"`,
+        `"${l.usuario || ""}"`,
+        `"${l.categoria || ""}"`,
+        `"${l.nivel || ""}"`,
+        `"${l.acao || ""}"`,
+        `"${safeDetails}"`
+      ];
+    });
 
     const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
     const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
